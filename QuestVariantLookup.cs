@@ -1,4 +1,4 @@
-﻿namespace QuestTracker;
+namespace QuestTracker;
 
 /// <summary>
 /// Quest variant lookup - maps quest names to all their level variants
@@ -111,6 +111,7 @@ public static class QuestVariantLookup
         { "The Wish", new[] { 8, 36 } },
         { "Special Delivery", new[] { 8, 36 } },
         { "Zoo Creeper", new[] { 8, 36 } },
+        { "Body and Mind", new[] { 8, 36 } },
         { "Fall of the Forbidden Temple", new[] { 8, 34 } },
         { "ToEE: First Level and Earth Temple", new[] { 8, 34 } },
         { "ToEE: Water Node", new[] { 8, 34 } },

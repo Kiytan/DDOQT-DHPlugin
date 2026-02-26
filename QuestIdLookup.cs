@@ -1,4 +1,4 @@
-﻿namespace QuestTracker;
+namespace QuestTracker;
 
 /// <summary>
 /// Quest ID lookup table generated from DDOQT quests.json
@@ -329,6 +329,8 @@ public static class QuestIdLookup
         { ("Special Delivery", 36), "special_delivery_level_36" },
         { ("Zoo Creeper", 8), "zoo_creeper_level_8" },
         { ("Zoo Creeper", 36), "zoo_creeper_level_36" },
+        { ("Body and Mind", 8), "body_and_mind_level_8" },
+        { ("Body and Mind", 36), "body_and_mind_level_36" },
         { ("Fall of the Forbidden Temple", 8), "fall_of_the_forbidden_temple_level_8" },
         { ("Fall of the Forbidden Temple", 34), "fall_of_the_forbidden_temple_level_34" },
         { ("Tomb of the Shadow Guard", 8), "tomb_of_the_shadow_guard" },
@@ -827,6 +829,7 @@ public static class QuestIdLookup
         { ("Legendary Vision of Destruction", 32), "legendary_vision_of_destruction" },
         { ("Defiler of the Just", 30), "defiler_of_the_just" },
         { ("Fire Over Morgrave", 34), "fire_over_morgrave" },
+        { ("Relentless", 36), "relentless" },
     };
 
     public static string? GetQuestId(string questName, int level)
