@@ -98,6 +98,20 @@ public class Plugin : IDdoPlugin
         { "Delera's Tomb", "Free Delera" },
         { "The Legendary Shroud", "The Codex and the Shroud" },
         
+        // The Dragon's Hand chain (record name -> weenie / DDOQT name)
+        { "The Dragon's Hand: Going Rogue", "Going Rogue" },
+        { "The Dragon's Hand: Wish Upon a Card", "Wish Upon a Card" },
+        { "The Dragon's Hand: Burning Down the House", "Burning Down the House" },
+        { "The Dragon's Hand: Thrall of Duty", "Thrall of Duty" },
+        { "The Dragon's Hand: The Final Draw", "The Final Draw" },
+
+        // Same chain; game sometimes uses plural possessive "Dragons'" in weenie / UI strings
+        { "The Dragons' Hand: Going Rogue", "Going Rogue" },
+        { "The Dragons' Hand: Wish Upon a Card", "Wish Upon a Card" },
+        { "The Dragons' Hand: Burning Down the House", "Burning Down the House" },
+        { "The Dragons' Hand: Thrall of Duty", "Thrall of Duty" },
+        { "The Dragons' Hand: The Final Draw", "The Final Draw" },
+
         // Chain dungeon name differences
         { "The Cloven-jaw Scourge: Caverns of Shaagh", "The Cloven-jaw Scourge: The Caverns of Shaagh" },
         { "The Kobolds' Den: Clan Gnashtooth", "The Kobold's Den: Clan Gnashtooth" },
@@ -524,12 +538,17 @@ public class Plugin : IDdoPlugin
         lock (_questLock)
         {
             var completedDate = DateTime.UtcNow.ToString("o");
-            
+
+            // Resolve aliases before variant lookup (chain titles like "The Dragons' Hand: …" are not variant keys)
+            var resolvedName = NormalizeApostrophes(questName.Trim());
+            if (_questNameAliases.TryGetValue(resolvedName, out var aliasTarget))
+                resolvedName = aliasTarget;
+
             // Try to find base level from variant lookup, default to 0
-            var variantLevels = QuestVariantLookup.GetVariantLevels(questName);
+            var variantLevels = QuestVariantLookup.GetVariantLevels(resolvedName);
             var baseLevel = variantLevels?.FirstOrDefault() ?? 0;
-            
-            var (questId, matched) = ConvertToQuestId(questName, baseLevel);
+
+            var (questId, matched) = ConvertToQuestId(resolvedName, baseLevel);
             
             // Check if already exists for this level
             var existingEntry = _completedQuests.FirstOrDefault(q => q.QuestDid == questDid && q.QuestLevel == baseLevel);
@@ -541,7 +560,7 @@ public class Plugin : IDdoPlugin
                 {
                     existingEntry.Difficulty = difficulty;
                     existingEntry.CompletedDate = completedDate;
-                    _log.Info($"Upgraded existing quest (by name): {questName} (Level {baseLevel}) to {difficulty}");
+                    _log.Info($"Upgraded existing quest (by name): {resolvedName} (Level {baseLevel}) to {difficulty}");
                     SaveQuestDataToFile();
                 }
             }
@@ -551,7 +570,7 @@ public class Plugin : IDdoPlugin
                 _completedQuests.Add(new QuestCompletion
                 {
                     QuestDid = questDid,
-                    QuestName = questName,
+                    QuestName = resolvedName,
                     QuestId = questId,
                     Difficulty = difficulty,
                     CompletedDate = completedDate,
@@ -559,7 +578,7 @@ public class Plugin : IDdoPlugin
                     QuestLevel = baseLevel,
                     MatchedInDdoqt = matched
                 });
-                _log.Info($"Added newly completed quest (by name): {questName} (Level {baseLevel}, {difficulty})");
+                _log.Info($"Added newly completed quest (by name): {resolvedName} (Level {baseLevel}, {difficulty})");
                 SaveQuestDataToFile();
             }
         }
