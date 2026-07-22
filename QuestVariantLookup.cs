@@ -281,6 +281,19 @@ public static class QuestVariantLookup
         { "Breaking the Ranks", new[] { 19, 27 } },
         { "A Break In the Ice", new[] { 19, 27 } },
         { "What Goes Up", new[] { 19, 27 } },
+        // Terror of Demogorgon
+        { "Tower of Vengeance", new[] { 11, 37 } },
+        { "The Price of an Egg", new[] { 11, 37 } },
+        { "The Fetid Wedding", new[] { 11, 37 } },
+        { "Hideous to Behold", new[] { 11, 37 } },
+        { "Stealing from Sorcere", new[] { 11, 37 } },
+        { "Back to the Abyss", new[] { 11, 37 } },
+        { "Demon in the Rough", new[] { 11, 37 } },
+        { "If It Wasn't For Bad Luck", new[] { 11, 37 } },
+        { "A Long Way to Mushrooms", new[] { 11, 37 } },
+        { "Flocked Together", new[] { 11, 37 } },
+        { "For Want of a Heart", new[] { 11, 37 } },
+        { "A Blood Pact", new[] { 11, 37 } },
     };
 
     public static int[]? GetVariantLevels(string questName)
