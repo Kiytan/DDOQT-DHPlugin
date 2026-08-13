@@ -5,7 +5,6 @@ A [Dungeon Helper](https://dungeonhelper.com) plugin that tracks your completed 
 ## Installation
 Download `QuestTracker_<version>.zip` from the [latest release](https://github.com/Kiytan/DDOQT-DHPlugin/releases/latest), then in Dungeon Helper go to **Settings → "Add plugin from zip file"** and pick it.
 
-Do not unzip it or copy the files into the plugins folder by hand — Dungeon Helper asks that plugins are always installed through that dialog.
 
 
 ## Use
