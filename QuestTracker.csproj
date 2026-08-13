@@ -7,7 +7,7 @@
     <OutputType>Library</OutputType>
     <AssemblyName>QuestTracker</AssemblyName>
     <RootNamespace>QuestTracker</RootNamespace>
-    <Version>1.1.0</Version>
+    <Version>1.1.5</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,4 +25,44 @@
   <ItemGroup>
     <EmbeddedResource Include="QTLogo.png" />
   </ItemGroup>
+
+  <!--
+    Dungeon Helper installs plugins through Settings -> "Add plugin from zip file",
+    and the archive must be laid out as plugins/<PluginName>/<files>. That layout is
+    taken from the DH team's own GlamourShots and Aligner releases; it is not written
+    down anywhere public, so re-check it against a current official plugin if an
+    install ever starts failing.
+
+    Produces dist/QuestTracker_<version>.zip. Run:
+
+        dotnet publish -c Release
+  -->
+  <Target Name="PackageForDungeonHelper" AfterTargets="Publish">
+    <PropertyGroup>
+      <DhPackageRoot>$(IntermediateOutputPath)dh-package/</DhPackageRoot>
+      <DhPluginDir>$(DhPackageRoot)plugins/$(AssemblyName)/</DhPluginDir>
+      <DhZipPath>$(MSBuildProjectDirectory)/dist/$(AssemblyName)_$(Version).zip</DhZipPath>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <!--
+        Only the plugin's own assembly and its dependency manifest, matching what the
+        1.1.5 release shipped. Dungeon Helper's host already supplies log4net and
+        System.Drawing.Common, so bundling those risks loading a second copy.
+
+        A genuinely third-party dependency does need to go in the zip — the official
+        Aligner plugin ships INIFileParser.dll this way — so add it here if one is
+        ever introduced.
+      -->
+      <DhPackageFiles Include="$(PublishDir)$(AssemblyName).dll" />
+      <DhPackageFiles Include="$(PublishDir)$(AssemblyName).deps.json" />
+    </ItemGroup>
+
+    <RemoveDir Directories="$(DhPackageRoot)" />
+    <MakeDir Directories="$(DhPluginDir);$(MSBuildProjectDirectory)/dist" />
+    <Copy SourceFiles="@(DhPackageFiles)" DestinationFolder="$(DhPluginDir)" />
+    <Delete Files="$(DhZipPath)" />
+    <ZipDirectory SourceDirectory="$(DhPackageRoot)" DestinationFile="$(DhZipPath)" />
+    <Message Importance="high" Text="Dungeon Helper package written to $(DhZipPath)" />
+  </Target>
 </Project>

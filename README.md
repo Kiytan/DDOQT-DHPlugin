@@ -3,7 +3,9 @@
 A [Dungeon Helper](https://dungeonhelper.com) plugin that tracks your completed quests and syncs them to the [DDO Quest Tracker](https://qt.ddotools.xyz).
 
 ## Installation
-Copy the Release Files into a Quest tracker plugin folder in the main dungeonhelper folder, by default C:\Users\UserNameHere\AppData\Roaming\Dungeon Helper\plugins.
+Download `QuestTracker_<version>.zip` from the [latest release](https://github.com/Kiytan/DDOQT-DHPlugin/releases/latest), then in Dungeon Helper go to **Settings → "Add plugin from zip file"** and pick it.
+
+Do not unzip it or copy the files into the plugins folder by hand — Dungeon Helper asks that plugins are always installed through that dialog.
 
 
 ## Use
@@ -28,3 +30,18 @@ BE AWARE: the plugin tracks quests completed on a per character basis, showing t
 It currently doesn't differentiate between completing a quest on reaper and on elite, as the method used to get the information doesn't distinguish between the two (similar to the adventure compendium in game)
 
 I have not tested this with every quest, and some chains behave oddly (notably ones that chain directly into each other). If it's not registering as you complete the quest, logging out/in should resolve it and update the list.
+
+
+## Building
+```
+dotnet publish -c Release
+```
+
+That produces `dist/QuestTracker_<version>.zip`, laid out as Dungeon Helper expects for the "Add plugin from zip file" dialog:
+
+```
+plugins/QuestTracker/QuestTracker.dll
+plugins/QuestTracker/QuestTracker.deps.json
+```
+
+log4net and System.Drawing.Common are deliberately left out — Dungeon Helper's host provides them. Any genuinely third-party dependency would need adding to the `PackageForDungeonHelper` target in [QuestTracker.csproj](QuestTracker.csproj), the way the official Aligner plugin ships `INIFileParser.dll`.

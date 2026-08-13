@@ -13,6 +13,9 @@ obj/
 .vscode/
 *.DotSettings.user
 
+# Claude Code
+.claude/
+
 # NuGet
 packages/
 *.nupkg
@@ -22,3 +25,6 @@ packages/
 chain_quest_debug.txt
 quest_name_mismatches.txt
 quest_cache.json
+
+# Dungeon Helper packages produced by the PackageForDungeonHelper target
+dist/
