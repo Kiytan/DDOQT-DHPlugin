@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using log4net;
@@ -901,6 +902,44 @@ public class Plugin : IDdoPlugin
             _log.Info($"Export JSON (first 500 chars): {json.Substring(0, Math.Min(500, json.Length))}");
             return LZString.CompressToEncodedURIComponent(json);
         }
+    }
+
+    /// <summary>
+    /// Generate a CSV of all completed quests, including ones not matched in DDOQT
+    /// </summary>
+    public string GenerateCsv()
+    {
+        var csv = new StringBuilder();
+        csv.AppendLine("Quest Name,Quest ID,Level,Difficulty,Favour,Matched in DDOQT");
+
+        lock (_questLock)
+        {
+            var quests = _completedQuests
+                .OrderBy(q => q.QuestLevel)
+                .ThenBy(q => q.QuestName, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var quest in quests)
+            {
+                csv.AppendLine(string.Join(",",
+                    CsvField(quest.QuestName),
+                    CsvField(quest.QuestId),
+                    quest.QuestLevel.ToString(CultureInfo.InvariantCulture),
+                    CsvField(quest.Difficulty),
+                    quest.CurrentFavor.ToString(CultureInfo.InvariantCulture),
+                    quest.MatchedInDdoqt ? "Yes" : "No"));
+            }
+        }
+
+        return csv.ToString();
+    }
+
+    // Quote fields containing commas, quotes or line breaks, doubling any embedded quotes
+    private static string CsvField(string? value)
+    {
+        value ??= "";
+        return value.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0
+            ? $"\"{value.Replace("\"", "\"\"")}\""
+            : value;
     }
 
     private int GetDifficultyRank(string difficulty)

@@ -14,6 +14,8 @@ Once loaded, the quest tracker window should show you the buttons to either
 create a url you can paste into qt.ddotools.xyz or a merge/replace option. This will open a browser window and automatically update the tracker with all the quests you have completed. As you complete quests with the plugin running, it will add them to the list of completed quests,
 so you can just hit sync again to update qt.
 
+There is also an **Export CSV** button, which saves your completed quests as a spreadsheet you can open in Excel or similar. Each row has the quest name, DDOQT quest ID, level, difficulty, favour and whether it matched a quest on qt.ddotools.xyz. Quests that didn't match are included too, so the CSV is a handy way to spot anything the site isn't picking up. A favour of 0 can mean the favour isn't known (for example, some chain quest dungeons) rather than none.
+
 <img width="724" height="458" alt="DDOQTig" src="https://github.com/user-attachments/assets/ffb04937-9cd4-4a25-b372-43a9889f9586" />
 
 I've mainly done this as I find using qt much easier to sort through quests I'm missing for certain favor, or level appropriate quests than using the adventure compendium in game.
@@ -42,5 +44,13 @@ That produces `dist/QuestTracker_<version>.zip`, laid out as Dungeon Helper expe
 plugins/QuestTracker/QuestTracker.dll
 plugins/QuestTracker/QuestTracker.deps.json
 ```
+
+You need the .NET 8 SDK. It also builds on Linux with Microsoft's SDK (from [dotnet-install.sh](https://learn.microsoft.com/en-gb/dotnet/core/tools/dotnet-install-script)) and an extra flag, as it is a Windows Forms project:
+
+```
+dotnet publish -c Release -p:EnableWindowsTargeting=true
+```
+
+Distribution-packaged SDKs (e.g. Fedora's `dotnet-sdk-8.0`) leave out the Windows Desktop targets, so they fail with `MSB4019 ... Microsoft.NET.Sdk.WindowsDesktop.targets was not found`.
 
 log4net and System.Drawing.Common are deliberately left out — Dungeon Helper's host provides them. Any genuinely third-party dependency would need adding to the `PackageForDungeonHelper` target in [QuestTracker.csproj](QuestTracker.csproj), the way the official Aligner plugin ships `INIFileParser.dll`.

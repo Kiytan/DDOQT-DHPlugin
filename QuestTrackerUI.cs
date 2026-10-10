@@ -296,10 +296,10 @@ public class QuestTrackerForm : Form
             MaximumSize = new Size(420, 0)
         };
 
-        // Generate button
-        var generateButton = CreateButton("Generate Export", Color.FromArgb(212, 175, 55), Color.FromArgb(26, 26, 26));
-        generateButton.Click += OnGenerateClick;
-        buttonPanel.Controls.Add(generateButton);
+        // Export CSV button
+        var exportCsvButton = CreateButton("Export CSV", Color.FromArgb(212, 175, 55), Color.FromArgb(26, 26, 26));
+        exportCsvButton.Click += OnExportCsvClick;
+        buttonPanel.Controls.Add(exportCsvButton);
 
         // Copy URL button
         var copyButton = CreateButton("Copy URL", Color.FromArgb(70, 130, 180), Color.White);
@@ -329,7 +329,7 @@ public class QuestTrackerForm : Form
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Consolas", 10),
             Dock = DockStyle.Fill,
-            Text = "Click 'Generate Export Hash' to create your DDOQT import data"
+            Text = "Click 'Export CSV' to save your completed quests as a spreadsheet"
         };
         mainPanel.Controls.Add(_exportTextBox, 0, 5);
         _ui.SetExportTextBox(_exportTextBox);
@@ -400,38 +400,6 @@ public class QuestTrackerForm : Form
         };
     }
 
-    private void OnGenerateClick(object? sender, EventArgs e)
-    {
-        try
-        {
-            if (Plugin.Instance == null)
-            {
-                _ui.UpdateStatus("Plugin not initialized", isError: true);
-                return;
-            }
-
-            _ui.UpdateStatus("Fetching quest data...");
-            Plugin.Instance.RefreshQuestData();
-
-            var count = Plugin.Instance.GetCompletedQuestCount();
-            if (count == 0)
-            {
-                _ui.UpdateStatus("No quest data - please log in to a character first", isError: true);
-                _ui.SetExportText("Quest data loads when you log in to a character.");
-                return;
-            }
-            
-            var hash = Plugin.Instance.GenerateExportHash();
-
-            _ui.SetExportText($"https://qt.ddotools.xyz/#{hash}");
-            _ui.UpdateStatus($"Generated hash for {count} completed quests");
-        }
-        catch (Exception ex)
-        {
-            _ui.UpdateStatus($"Error: {ex.Message}", isError: true);
-        }
-    }
-
     private void OnCopyUrlClick(object? sender, EventArgs e)
     {
         try
@@ -458,6 +426,66 @@ public class QuestTrackerForm : Form
             thread.Join();
             
             _ui.UpdateStatus("URL copied to clipboard!");
+        }
+        catch (Exception ex)
+        {
+            _ui.UpdateStatus($"Error: {ex.Message}", isError: true);
+        }
+    }
+
+    private void OnExportCsvClick(object? sender, EventArgs e)
+    {
+        try
+        {
+            if (Plugin.Instance == null)
+            {
+                _ui.UpdateStatus("Plugin not initialized", isError: true);
+                return;
+            }
+
+            _ui.UpdateStatus("Fetching quest data...");
+            Plugin.Instance.RefreshQuestData();
+
+            var count = Plugin.Instance.GetCompletedQuests().Count();
+            if (count == 0)
+            {
+                _ui.UpdateStatus("No quest data - please log in to a character first", isError: true);
+                _ui.SetExportText("Quest data loads when you log in to a character.");
+                return;
+            }
+
+            var csv = Plugin.Instance.GenerateCsv();
+
+            // File dialogs require STA thread
+            string? path = null;
+            var thread = new System.Threading.Thread(() =>
+            {
+                using var dialog = new SaveFileDialog
+                {
+                    Title = "Export completed quests",
+                    Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+                    FileName = "completed_quests.csv",
+                    DefaultExt = "csv",
+                    AddExtension = true,
+                    OverwritePrompt = true
+                };
+                if (dialog.ShowDialog() == DialogResult.OK)
+                    path = dialog.FileName;
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+
+            if (path == null)
+            {
+                _ui.RefreshQuestCount();
+                return;
+            }
+
+            // UTF-8 with BOM so Excel detects the encoding
+            System.IO.File.WriteAllText(path, csv, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+            _ui.SetExportText($"Saved {count} quests to:\r\n{path}");
+            _ui.UpdateStatus($"Exported {count} quests to {System.IO.Path.GetFileName(path)}");
         }
         catch (Exception ex)
         {
