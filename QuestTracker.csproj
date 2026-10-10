@@ -7,7 +7,7 @@
     <OutputType>Library</OutputType>
     <AssemblyName>QuestTracker</AssemblyName>
     <RootNamespace>QuestTracker</RootNamespace>
-    <Version>1.1.5</Version>
+    <Version>1.1.6</Version>
   </PropertyGroup>
 
   <ItemGroup>
