@@ -28,3 +28,12 @@ quest_cache.json
 
 # Dungeon Helper packages produced by the PackageForDungeonHelper target
 dist/
+
+# Author signing key. Never commit these.
+*.pfx
+*.key
+*.crt
+signing/
+
+# Plugin log, if a test build is ever run from the repo folder
+QuestTracker.log*

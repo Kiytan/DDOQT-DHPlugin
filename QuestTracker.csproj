@@ -1,68 +1,127 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <UseWindowsForms>true</UseWindowsForms>
     <OutputType>Library</OutputType>
     <AssemblyName>QuestTracker</AssemblyName>
     <RootNamespace>QuestTracker</RootNamespace>
-    <Version>1.1.6</Version>
+    <Version>2.0.0</Version>
+    <Authors>Kiytan</Authors>
+    <Description>Tracks completed quests and exports for DDOQT (qt.ddotools.xyz)</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="log4net" Version="2.0.17" />
-    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+    <!-- Dungeon Helper provides VoK.Sdk (with ImGui.NET inside it), log4net and Newtonsoft.Json at
+         runtime, so none of them ship in the bundle. -->
+    <PackageReference Include="VoK.Sdk" Version="5.0.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="VoK.Sdk">
-      <HintPath>.\lib\VoK.Sdk.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="QTLogo.png" />
+    <!-- 36x36 toolbar icon, read by Dungeon Helper through [PluginIcon] without loading the plugin -->
+    <EmbeddedResource Include="QTIcon.png" />
   </ItemGroup>
 
   <!--
-    Dungeon Helper installs plugins through Settings -> "Add plugin from zip file",
-    and the archive must be laid out as plugins/<PluginName>/<files>. That layout is
-    taken from the DH team's own GlamourShots and Aligner releases; it is not written
-    down anywhere public, so re-check it against a current official plugin if an
-    install ever starts failing.
-
-    Produces dist/QuestTracker_<version>.zip. Run:
+    Dungeon Helper 5 bundle. Run:
 
         dotnet publish -c Release
+
+    and it writes dist/QuestTracker_<version>.zip. The layout and paperwork follow the DH team's
+    Aligner plugin (gitlab.com/VaultOfKundarak/aligner), the reference for third-party DH5 plugins:
+
+      * the zip is FLAT. DH4's plugins/QuestTracker/ prefix is refused by DH5.
+      * QuestTracker.dll is Authenticode-signed with the author key (osslsigncode).
+      * QuestTracker.pem is the author public key, derived from the same pfx.
+      * QuestTracker.manifest lists a SHA-256 of every file in the zip, and QuestTracker.manifest.sig
+        signs it. DH5 compares the archive against the manifest in both directions at install.
+      * QuestTracker.entitlement(.sig), issued by the DH team, binds the [PluginId] to the author key.
+        Without it DH5 refuses the install. Kept in entitlement/ and never edited.
+      * plugin.metadata names the update feed every install polls permanently.
+
+    The author key comes from the DH_AUTHOR_PFX environment variable (a .pfx with an empty password).
+    Without it the build still produces a zip, as a compile check, but Dungeon Helper will refuse it.
+
+    Set DH_DATA_DIR to Dungeon Helper's data folder (the one holding plugins/) to also copy the bundle
+    straight into plugins/QuestTracker for testing.
   -->
+  <PropertyGroup>
+    <DhPluginName>$(AssemblyName)</DhPluginName>
+    <!-- Fixed into every install. Never point it anywhere else once a release has shipped. -->
+    <DhFeedUrl>https://kiytan.github.io/DDOQT-DHPlugin/V2/plugin.metadata</DhFeedUrl>
+    <DhProductInfoUrl>https://github.com/Kiytan/DDOQT-DHPlugin</DhProductInfoUrl>
+    <DhAuthorPfx>$(DH_AUTHOR_PFX)</DhAuthorPfx>
+    <DhOpenSsl Condition="'$(DhOpenSsl)' == ''">openssl</DhOpenSsl>
+    <DhOsslSignCode Condition="'$(DhOsslSignCode)' == ''">osslsigncode</DhOsslSignCode>
+  </PropertyGroup>
+
   <Target Name="PackageForDungeonHelper" AfterTargets="Publish">
     <PropertyGroup>
-      <DhPackageRoot>$(IntermediateOutputPath)dh-package/</DhPackageRoot>
-      <DhPluginDir>$(DhPackageRoot)plugins/$(AssemblyName)/</DhPluginDir>
-      <DhZipPath>$(MSBuildProjectDirectory)/dist/$(AssemblyName)_$(Version).zip</DhZipPath>
+      <DhStageDir>$(MSBuildProjectDirectory)/$(IntermediateOutputPath)dh-package/$(DhPluginName)/</DhStageDir>
+      <DhZipPath>$(MSBuildProjectDirectory)/dist/$(DhPluginName)_$(Version).zip</DhZipPath>
+      <DhEntitlement>$(MSBuildProjectDirectory)/entitlement/$(DhPluginName).entitlement</DhEntitlement>
+      <DhSigned Condition="'$(DhAuthorPfx)' != '' And Exists('$(DhAuthorPfx)')">true</DhSigned>
     </PropertyGroup>
 
+    <Error Condition="'$(DhAuthorPfx)' != '' And '$(DhSigned)' != 'true'" Text="DH_AUTHOR_PFX does not exist: $(DhAuthorPfx)" />
+
+    <RemoveDir Directories="$(DhStageDir)" />
+    <MakeDir Directories="$(DhStageDir);$(MSBuildProjectDirectory)/dist" />
+    <Copy SourceFiles="$(PublishDir)$(AssemblyName).dll;$(PublishDir)$(AssemblyName).deps.json" DestinationFolder="$(DhStageDir)" />
+
+    <!-- Sign the assembly. The signer must be the key the entitlement names, or the plugin is refused. -->
+    <Exec Condition="'$(DhSigned)' == 'true'"
+          Command="&quot;$(DhOsslSignCode)&quot; sign -pkcs12 &quot;$(DhAuthorPfx)&quot; -pass &quot;&quot; -h sha256 -t http://timestamp.digicert.com -in &quot;$(DhStageDir)$(AssemblyName).dll&quot; -out &quot;$(DhStageDir)$(AssemblyName).signed.dll&quot;" />
+    <Move Condition="'$(DhSigned)' == 'true'" SourceFiles="$(DhStageDir)$(AssemblyName).signed.dll" DestinationFiles="$(DhStageDir)$(AssemblyName).dll" />
+    <Exec Condition="'$(DhSigned)' == 'true'"
+          Command="&quot;$(DhOpenSsl)&quot; pkcs12 -in &quot;$(DhAuthorPfx)&quot; -nokeys -clcerts -passin pass: | &quot;$(DhOpenSsl)&quot; x509 -noout -pubkey &gt; &quot;$(DhStageDir)$(DhPluginName).pem&quot;" />
+
+    <!-- The entitlement and its signature sit at the root of the zip, byte for byte as issued -->
+    <Copy Condition="Exists('$(DhEntitlement)') And Exists('$(DhEntitlement).sig')" SourceFiles="$(DhEntitlement);$(DhEntitlement).sig" DestinationFolder="$(DhStageDir)" />
+
+    <PropertyGroup>
+      <DhMetadataJson>{
+    "PluginName": "$(DhPluginName)",
+    "ProductInfoUrl": "$(DhProductInfoUrl)",
+    "UpdateSource": "$(DhFeedUrl)",
+    "CurrentVersion": "$(Version)",
+    "AllowedVersions": [ { "Version": "$(Version)" } ]
+}</DhMetadataJson>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(DhStageDir)plugin.metadata" Lines="$(DhMetadataJson)" Overwrite="true" />
+
+    <!-- The manifest goes last, because it pins a hash of every other file in the bundle -->
     <ItemGroup>
-      <!--
-        Only the plugin's own assembly and its dependency manifest, matching what the
-        1.1.5 release shipped. Dungeon Helper's host already supplies log4net and
-        System.Drawing.Common, so bundling those risks loading a second copy.
-
-        A genuinely third-party dependency does need to go in the zip — the official
-        Aligner plugin ships INIFileParser.dll this way — so add it here if one is
-        ever introduced.
-      -->
-      <DhPackageFiles Include="$(PublishDir)$(AssemblyName).dll" />
-      <DhPackageFiles Include="$(PublishDir)$(AssemblyName).deps.json" />
+      <_DhManifestFile Include="$(DhStageDir)*" Exclude="$(DhStageDir)$(DhPluginName).manifest;$(DhStageDir)$(DhPluginName).manifest.sig" />
     </ItemGroup>
+    <GetFileHash Condition="'$(DhSigned)' == 'true'" Files="@(_DhManifestFile)" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Items" ItemName="_DhHashed" />
+    </GetFileHash>
+    <ItemGroup>
+      <_DhEntry Include="@(_DhHashed->'{&quot;path&quot;:&quot;%(Filename)%(Extension)&quot;,&quot;sha256&quot;:&quot;%(FileHash)&quot;}')" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_DhManifestJson>{&quot;formatVersion&quot;:1,&quot;pluginName&quot;:&quot;$(DhPluginName)&quot;,&quot;entries&quot;:[@(_DhEntry, ',')]}</_DhManifestJson>
+    </PropertyGroup>
+    <WriteLinesToFile Condition="'$(DhSigned)' == 'true'" File="$(DhStageDir)$(DhPluginName).manifest" Overwrite="true" Lines="$(_DhManifestJson)" />
+    <Exec Condition="'$(DhSigned)' == 'true'"
+          Command="&quot;$(DhOpenSsl)&quot; dgst -sha256 -sign &quot;$(DhAuthorPfx)&quot; -passin pass: -out &quot;$(DhStageDir)$(DhPluginName).manifest.sig&quot; &quot;$(DhStageDir)$(DhPluginName).manifest&quot;" />
+    <!-- Checked against the .pem the client will use, so a key mismatch fails here rather than in game -->
+    <Exec Condition="'$(DhSigned)' == 'true'"
+          Command="&quot;$(DhOpenSsl)&quot; dgst -sha256 -verify &quot;$(DhStageDir)$(DhPluginName).pem&quot; -signature &quot;$(DhStageDir)$(DhPluginName).manifest.sig&quot; &quot;$(DhStageDir)$(DhPluginName).manifest&quot;" />
 
-    <RemoveDir Directories="$(DhPackageRoot)" />
-    <MakeDir Directories="$(DhPluginDir);$(MSBuildProjectDirectory)/dist" />
-    <Copy SourceFiles="@(DhPackageFiles)" DestinationFolder="$(DhPluginDir)" />
     <Delete Files="$(DhZipPath)" />
-    <ZipDirectory SourceDirectory="$(DhPackageRoot)" DestinationFile="$(DhZipPath)" />
+    <ZipDirectory SourceDirectory="$(DhStageDir)" DestinationFile="$(DhZipPath)" />
+
     <Message Importance="high" Text="Dungeon Helper package written to $(DhZipPath)" />
+    <Warning Condition="'$(DhSigned)' != 'true'" Text="DH_AUTHOR_PFX is not set, so the bundle is unsigned and has no manifest. Dungeon Helper will refuse to install it." />
+    <Warning Condition="!Exists('$(DhEntitlement)') Or !Exists('$(DhEntitlement).sig')" Text="No entitlement/$(DhPluginName).entitlement(.sig). It loads on a machine with your personal machine.entitlement, but anyone else's Dungeon Helper will refuse it. Request one from the Dungeon Helper team before releasing." />
+
+    <!-- Optional test deploy: DH_DATA_DIR is the Dungeon Helper data folder that holds plugins/ -->
+    <ItemGroup Condition="'$(DH_DATA_DIR)' != ''">
+      <_DhDeployFile Include="$(DhStageDir)*" />
+    </ItemGroup>
+    <Copy Condition="'$(DH_DATA_DIR)' != ''" SourceFiles="@(_DhDeployFile)" DestinationFolder="$(DH_DATA_DIR)/plugins/$(DhPluginName)" />
+    <Message Condition="'$(DH_DATA_DIR)' != ''" Importance="high" Text="Deployed to $(DH_DATA_DIR)/plugins/$(DhPluginName)" />
   </Target>
 </Project>

@@ -3,15 +3,12 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using log4net;
 using VoK.Sdk;
 using VoK.Sdk.Ddo;
-using VoK.Sdk.Events;
-using VoK.Sdk.Plugins;
+using VoK.Sdk.Ddo.Enums;
 
 namespace QuestTracker;
 
@@ -19,32 +16,32 @@ namespace QuestTracker;
 /// Quest Tracker Plugin for Dungeon Helper
 /// Tracks completed quests and exports them in DDOQT-compatible format
 /// </summary>
-public class Plugin : IDdoPlugin
+[PluginId("f006af62-5b8a-4298-9017-e4e588df4d7d")]
+[PluginIcon("QTIcon.png")]
+public class Plugin : IPlugin
 {
-    public Guid PluginId => Guid.Parse("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
-    public GameId Game => GameId.DDO;
-    public string PluginKey => "quest-tracker-ddoqt";
-    public string Name => "Quest Tracker";
-    public string Description => "Tracks completed quests and exports for DDOQT (qt.ddotools.xyz)";
-    public string Author => "QuestTracker";
-    public Version Version => GetType().Assembly.GetName().Version ?? new Version(1, 0, 0);
-
     private IDdoGameDataProvider? _gameDataProvider;
     private string? _folder;
     private QuestTrackerUI? _ui;
-    private readonly ILog _log = LogManager.GetLogger(MethodBase.GetCurrentMethod()?.DeclaringType);
+    private readonly PluginLog _log = new(typeof(Plugin));
+    private PluginSettings _settings = new();
 
     // Stores current quest data
     private List<QuestCompletion> _completedQuests = new();
     private IReadOnlyCollection<IStoryQuestRecord>? _lastQuestRecords;
     private readonly object _questLock = new();
-    private IDisposable? _eventRegistration;
-    
+
     // Track current instance quest for completion detection
     private uint? _currentInstanceQuestDid;
     private uint? _currentQuestAreaId;
     private string _currentInstanceDifficulty = "Elite";
-    
+
+    // When the last quest Experience Report arrived. A "Quest Completed" alert only records the
+    // completion itself if no report turns up around the same time.
+    private DateTime _lastExperienceReportUtc = DateTime.MinValue;
+    private static readonly TimeSpan AlertFallbackDelay = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ReportMatchWindow = TimeSpan.FromSeconds(15);
+
     // Character context
     private ulong _currentCharacterId = 0;
     
@@ -130,51 +127,68 @@ public class Plugin : IDdoPlugin
         Instance = this;
     }
 
-    public void Initialize(IDdoGameDataProvider gameDataProvider, string folder)
+    // Dungeon Helper toggles this when the toolbar icon is clicked, and reads it to decide whether to
+    // call ImGui_Render. The interface default ignores sets, so the window could never open without it.
+    public bool WindowVisible { get; set; }
+
+    // The icon comes from [PluginIcon]; this is only for changing it at runtime
+    public byte[]? ToolbarImage => null;
+
+    public void Initialize(IDdoGameDataProvider gameDataProvider, IDdoEventProvider eventProvider, string pluginFolder)
     {
         _gameDataProvider = gameDataProvider;
-        _folder = folder;
+        _folder = pluginFolder;
+        _log.SetFolder(pluginFolder);
+        LoadSettings();
         _ui = new QuestTrackerUI();
 
-        _log.Info("Quest Tracker plugin initialized");
-        
+        _log.Info($"Quest Tracker plugin {GetType().Assembly.GetName().Version} initialized");
+
         // Load cached quest data from previous session
         LoadQuestDataFromFile();
+        _ui.RefreshQuestCount();
 
         // Subscribe to events
         try
         {
-            if (_gameDataProvider.EventProvider != null)
-            {
-                _gameDataProvider.EventProvider.OnAllStoryQuestRecords?.AddHandler(OnQuestRecordsReceived);
-                _gameDataProvider.EventProvider.OnLogin?.AddHandler(OnLoginReceived);
-                _gameDataProvider.EventProvider.OnMapAreaChange?.AddHandler(OnMapAreaChange);
-                _gameDataProvider.EventProvider.OnAddAlert?.AddHandler(OnAddAlert);
-                _gameDataProvider.EventProvider.OnPortalActivate?.AddHandler(OnPortalActivate);
-            }
-            else
-            {
-                _log.Warn("EventProvider is null");
-            }
+            eventProvider.OnAllStoryQuestRecords.AddHandler(OnQuestRecordsReceived);
+            eventProvider.OnLogin.AddHandler(OnLoginReceived);
+            eventProvider.OnMapAreaChange.AddHandler(OnMapAreaChange);
+            eventProvider.OnAddAlert.AddHandler(OnAddAlert);
+            eventProvider.OnPortalActivate.AddHandler(OnPortalActivate);
+            eventProvider.OnQuestExperienceReport.AddHandler(OnQuestExperienceReport);
         }
         catch (Exception ex)
         {
             _log.Error("Failed to subscribe to quest events", ex);
         }
     }
-    
+
+    public void ImGui_Render()
+    {
+        // The plugin is responsible for honouring WindowVisible
+        if (!WindowVisible || _ui == null) return;
+
+        WindowVisible = _ui.Render();
+    }
+
+    public void ClientFrameStep()
+    {
+    }
+
     private async Task OnMapAreaChange(uint areaId)
     {
         try
         {
             // Wait a moment for SDK to populate instance data
             await Task.Delay(1000);
-            
-            var newDid = _gameDataProvider?.GetInstanceQuestDid();
-            
+
+            var newDid = _gameDataProvider == null ? null : await _gameDataProvider.GetInstanceQuestDidAsync();
+            var inTown = _gameDataProvider == null ? null : await _gameDataProvider.InTownAsync();
+
             _log.Info($"MapAreaChange - areaId: {areaId}, previousAreaId: {_currentQuestAreaId}, " +
                       $"previousDid: {_currentInstanceQuestDid}, newDid: {newDid}, " +
-                      $"InTown: {_gameDataProvider?.InTown()}");
+                      $"InTown: {inTown}");
             
             if (newDid.HasValue && newDid.Value != 0)
             {
@@ -206,17 +220,19 @@ public class Plugin : IDdoPlugin
     
     
     
-    private Task OnPortalActivate(IPortalInfo portalInfo)
+    private async Task OnPortalActivate(IPortalInfo portalInfo)
     {
         try
         {
             if (portalInfo != null)
             {
+                var currentQuestDid = _gameDataProvider == null ? null : await _gameDataProvider.GetCurrentQuestDidAsync();
+
                 // Log all available portal info including QuestBestowed for research
                 _log.Info($"PortalActivate - ActiveInstanceDid: {portalInfo.ActiveInstanceDid}, " +
                           $"QuestGenericDifficulty: {portalInfo.QuestGenericDifficulty}, " +
                           $"AvailableQuests: [{string.Join(",", portalInfo.AvailableQuests ?? new List<uint>())}], " +
-                          $"GetCurrentQuestDid: {_gameDataProvider?.GetCurrentQuestDid()}");
+                          $"GetCurrentQuestDid: {currentQuestDid}");
                 
                 // Reset tracked DID so new portal data always takes effect
                 var previousDid = _currentInstanceQuestDid;
@@ -245,7 +261,6 @@ public class Plugin : IDdoPlugin
                 // Fallback to GetCurrentQuestDid
                 if (!_currentInstanceQuestDid.HasValue || _currentInstanceQuestDid.Value == 0)
                 {
-                    var currentQuestDid = _gameDataProvider?.GetCurrentQuestDid();
                     if (currentQuestDid.HasValue && currentQuestDid.Value != 0)
                     {
                         _currentInstanceQuestDid = currentQuestDid.Value;
@@ -285,10 +300,87 @@ public class Plugin : IDdoPlugin
         {
             _log.Error("Error processing PortalActivate", ex);
         }
-        return Task.CompletedTask;
     }
-    
-    private Task OnAddAlert(IAddAlert alert)
+
+    /// <summary>
+    /// The Experience Report shown when an instanced quest is completed. This is the main completion
+    /// signal: unlike the alert, it says exactly which difficulty the quest was run on, Reaper included.
+    /// </summary>
+    private async Task OnQuestExperienceReport(IQuestExperienceReport report)
+    {
+        try
+        {
+            if (report == null) return;
+
+            var summary = $"Experience report - QuestName: '{report.QuestName}', QuestLevel: {report.QuestLevel}, " +
+                          $"Difficulty: {report.Difficulty}, ExperienceType: {report.ExperienceType}, " +
+                          $"ReaperSkullLevel: {report.ReaperSkullLevel}, Status: '{report.Status}', IsCompleted: {report.IsCompleted}";
+
+            // The report also arrives every time XP is earned while the quest is underway. Only a
+            // completed one counts, so those mid-quest reports can't stop the alert fallback.
+            if (!report.IsCompleted)
+            {
+                _log.Debug(summary);
+                return;
+            }
+
+            _lastExperienceReportUtc = DateTime.UtcNow;
+            _log.Info(summary);
+
+            var difficulty = DetermineDifficulty(report);
+            var ranHigherTier = RanHigherTier(report);
+            _log.Info($"Experience report difficulty: {difficulty}, higher tier: {ranHigherTier}");
+
+            await HandleQuestCompletion(difficulty, ranHigherTier);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Error processing quest experience report", ex);
+        }
+    }
+
+    /// <summary>
+    /// Maps the report's DifficultyType onto the difficulties DDOQT tracks
+    /// </summary>
+    private static string DetermineDifficulty(IQuestExperienceReport report)
+    {
+        if (report.ReaperSkullLevel > 0)
+            return "Reaper";
+
+        return (DifficultyType?)report.Difficulty switch
+        {
+            DifficultyType.Reaper or DifficultyType.Epic_Reaper => "Reaper",
+            DifficultyType.Elite or DifficultyType.EliteFinished or DifficultyType.Epic_Elite => "Elite",
+            DifficultyType.Hard or DifficultyType.Epic_Hard => "Hard",
+            _ => "Normal" // Normal, Casual, Solo and their epic versions
+        };
+    }
+
+    /// <summary>
+    /// Whether the run was the epic or legendary version of the quest rather than the heroic one.
+    /// Null when the report doesn't say.
+    /// </summary>
+    private static bool? RanHigherTier(IQuestExperienceReport report)
+    {
+        if (report.QuestLevel.HasValue)
+            return report.QuestLevel.Value >= 20;
+
+        if (report.ExperienceType is ExperienceType.Epic or ExperienceType.Legendary)
+            return true;
+
+        if (report.ExperienceType is ExperienceType.Heroic)
+            return false;
+
+        return (DifficultyType?)report.Difficulty switch
+        {
+            DifficultyType.Epic or DifficultyType.Epic_Casual or DifficultyType.Epic_Hard
+                or DifficultyType.Epic_Elite or DifficultyType.Epic_Reaper => true,
+            null => null,
+            _ => false
+        };
+    }
+
+    private async Task OnAddAlert(IAddAlert alert)
     {
         try
         {
@@ -296,15 +388,16 @@ public class Plugin : IDdoPlugin
             {
                 var desc = alert.Description?.Trim() ?? "";
                 var title = alert.Title?.Trim() ?? "";
-                
+
                 // Log all alerts for research - some may contain difficulty info
                 _log.Debug($"Alert received - Title: '{title}', Description: '{desc}', Did: {alert.Did}");
-                
+
                 // Check for quest/adventure completion
                 if (desc.StartsWith("Quest Completed") || desc.StartsWith("Adventure Completed"))
                 {
                     _log.Info($"Quest completion alert - Title: '{title}', Description: '{desc}'");
-                    
+                    var alertUtc = DateTime.UtcNow;
+
                     // Try to extract difficulty from alert text (e.g., "Quest Completed on Elite")
                     var alertDifficulty = ExtractDifficultyFromAlert(desc) ?? ExtractDifficultyFromAlert(title);
                     if (!string.IsNullOrEmpty(alertDifficulty))
@@ -312,8 +405,17 @@ public class Plugin : IDdoPlugin
                         _log.Info($"Difficulty extracted from alert text: {alertDifficulty}");
                         _currentInstanceDifficulty = alertDifficulty;
                     }
-                    
-                    HandleQuestCompletion();
+
+                    // Give the Experience Report a chance to arrive, as it knows the real difficulty
+                    await Task.Delay(AlertFallbackDelay);
+                    if (alertUtc - _lastExperienceReportUtc < ReportMatchWindow)
+                    {
+                        _log.Info("Completion already recorded from the Experience Report, ignoring alert");
+                        return;
+                    }
+
+                    _log.Info("No Experience Report for this completion, falling back to the alert");
+                    await HandleQuestCompletion(_currentInstanceDifficulty, null);
                 }
             }
         }
@@ -321,7 +423,6 @@ public class Plugin : IDdoPlugin
         {
             _log.Error("Error processing Alert", ex);
         }
-        return Task.CompletedTask;
     }
     
     /// <summary>
@@ -356,16 +457,18 @@ public class Plugin : IDdoPlugin
         return null;
     }
     
-    private void HandleQuestCompletion()
+    /// <param name="difficulty">The difficulty the quest was completed on</param>
+    /// <param name="ranHigherTier">True for an epic or legendary run, false for heroic, null if unknown</param>
+    private async Task HandleQuestCompletion(string difficulty, bool? ranHigherTier)
     {
         try
         {
             // Try multiple sources for quest DID
             var questDid = _currentInstanceQuestDid;
-            var instanceDid = _gameDataProvider?.GetInstanceQuestDid();
-            var currentDid = _gameDataProvider?.GetCurrentQuestDid();
-            
-            _log.Info($"Quest completion - tracked DID: {questDid}, instance DID: {instanceDid}, current DID: {currentDid}, difficulty: {_currentInstanceDifficulty}");
+            var instanceDid = _gameDataProvider == null ? null : await _gameDataProvider.GetInstanceQuestDidAsync();
+            var currentDid = _gameDataProvider == null ? null : await _gameDataProvider.GetCurrentQuestDidAsync();
+
+            _log.Info($"Quest completion - tracked DID: {questDid}, instance DID: {instanceDid}, current DID: {currentDid}, difficulty: {difficulty}");
             
             var didSource = "tracked";
             if (!questDid.HasValue || questDid.Value == 0)
@@ -389,25 +492,24 @@ public class Plugin : IDdoPlugin
                 var usingName = actualName ?? questRecord.QuestName ?? "";
                 
                 _log.Info($"Quest completed - RecordName: '{questRecord.QuestName}', WeenieName: '{actualName}', UsingName: '{usingName}', " +
-                          $"difficulty: {_currentInstanceDifficulty}, DID: {questDid.Value}");
-                
+                          $"difficulty: {difficulty}, DID: {questDid.Value}");
+
                 // Pass the resolved name but keep the record's favor/level metadata
-                AddCompletedQuestFromRecord(questRecord, _currentInstanceDifficulty, usingName);
+                AddCompletedQuestFromRecord(questRecord, difficulty, usingName, ranHigherTier);
                 _ui?.RefreshQuestCount();
-                
+
                 // Reset difficulty after completion for next quest
                 _currentInstanceDifficulty = "Elite";
             }
             else if (questDid.HasValue && questDid.Value != 0)
             {
                 // Fallback: DID not in quest records - try weenie name lookup (for chain quest individual dungeons)
-                var weenieProps = _gameDataProvider?.GetWeenieProperties(questDid.Value);
-                var questName = weenieProps?.GetType().GetProperty("Name")?.GetValue(weenieProps) as string;
-                
+                var questName = GetActualQuestName(questDid.Value);
+
                 if (!string.IsNullOrEmpty(questName))
                 {
-                    _log.Info($"Quest completed (via weenie name): {questName} at {_currentInstanceDifficulty}");
-                    AddCompletedQuestByName(questDid.Value, questName, _currentInstanceDifficulty);
+                    _log.Info($"Quest completed (via weenie name): {questName} at {difficulty}");
+                    AddCompletedQuestByName(questDid.Value, questName, difficulty);
                     _ui?.RefreshQuestCount();
                 }
                 else
@@ -425,7 +527,7 @@ public class Plugin : IDdoPlugin
         }
     }
     
-    private void AddCompletedQuestFromRecord(IStoryQuestRecord quest, string difficulty, string? overriddenName = null)
+    private void AddCompletedQuestFromRecord(IStoryQuestRecord quest, string difficulty, string? overriddenName = null, bool? ranHigherTier = null)
     {
         lock (_questLock)
         {
@@ -433,20 +535,25 @@ public class Plugin : IDdoPlugin
             var baseLevel = (int)quest.QuestLevel;
             var completedDate = DateTime.UtcNow.ToString("o");
             var favor = quest.CurrentFavor ?? 0;
-            
+
             // Check if this quest has heroic/epic/legendary variants
             var variantLevels = QuestVariantLookup.GetVariantLevels(questName);
-            
+
             if (variantLevels != null && variantLevels.Length > 1)
             {
                 // Quest has variants - determine which tier was completed using the encoded difficulty (matching login sync logic)
                 var rawDifficulty = quest.HighestDifficultyCompleted;
-                
+
                 foreach (var level in variantLevels)
                 {
                     bool shouldInclude = false;
-                    
-                    if (level <= 19) // Heroic
+
+                    if (ranHigherTier.HasValue)
+                    {
+                        // The Experience Report says exactly which tier was run
+                        shouldInclude = ranHigherTier.Value == (level > 19);
+                    }
+                    else if (level <= 19) // Heroic
                     {
                         shouldInclude = true;
                     }
@@ -619,7 +726,25 @@ public class Plugin : IDdoPlugin
         try
         {
             _lastQuestRecords = questRecords;
-            
+
+            // How often each raw HighestDifficultyCompleted value appears, to check DetermineDifficulty's
+            // mapping against real data (the SDK's DifficultyType has Reaper as 11 and Epic_Reaper as 12)
+            var rawDifficultyCounts = questRecords
+                .Where(q => q.QuestType == 1 && IsQuestCompleted(q))
+                .GroupBy(q => q.HighestDifficultyCompleted)
+                .OrderBy(g => g.Key)
+                .Select(g => $"{g.Key}: {g.Count()}");
+            _log.Info($"Quest records received: {questRecords.Count}, completed quests by raw difficulty - {string.Join(", ", rawDifficultyCounts)}");
+
+            var knownRawDifficulties = new HashSet<uint> { 1, 2, 3, 4, 5, 6, 9, 10, 20 };
+            var unrecognised = questRecords
+                .Where(q => q.QuestType == 1 && IsQuestCompleted(q) && !knownRawDifficulties.Contains(q.HighestDifficultyCompleted ?? 0))
+                .Take(30)
+                .Select(q => $"'{q.QuestName}' = {q.HighestDifficultyCompleted}");
+            var unrecognisedText = string.Join(", ", unrecognised);
+            if (unrecognisedText.Length > 0)
+                _log.Info($"Quests with a raw difficulty DetermineDifficulty doesn't map: {unrecognisedText}");
+
             // Build DID lookup dictionary for all quests
             _questRecordsByDid = questRecords.ToDictionary(q => q.QuestDid, q => q);
             
@@ -759,14 +884,10 @@ public class Plugin : IDdoPlugin
     {
         try
         {
-            var weenieProps = _gameDataProvider?.GetWeenieProperties(questDid);
-            if (weenieProps != null)
+            var name = _gameDataProvider?.GetWeenieProperties(questDid)?.Name;
+            if (!string.IsNullOrEmpty(name))
             {
-                var name = weenieProps.GetType().GetProperty("Name")?.GetValue(weenieProps) as string;
-                if (!string.IsNullOrEmpty(name))
-                {
-                    return name;
-                }
+                return name;
             }
         }
         catch { }
@@ -975,6 +1096,56 @@ public class Plugin : IDdoPlugin
         }
     }
     
+    /// <summary>
+    /// Whether the plugin saves QuestTracker.log in its folder
+    /// </summary>
+    public bool LoggingEnabled => _settings.LoggingEnabled;
+
+    public void SetLoggingEnabled(bool enabled)
+    {
+        if (enabled == _settings.LoggingEnabled) return;
+
+        // Log the change while the file is still being written to, either side of the switch
+        if (!enabled) _log.Info("Log file turned off");
+        _settings.LoggingEnabled = enabled;
+        _log.FileEnabled = enabled;
+        if (enabled) _log.Info($"Log file turned on (Quest Tracker {GetType().Assembly.GetName().Version})");
+
+        SaveSettings();
+    }
+
+    private string GetSettingsFilePath() => Path.Combine(_folder ?? "", "settings.json");
+
+    private void LoadSettings()
+    {
+        try
+        {
+            var settingsFile = GetSettingsFilePath();
+            if (File.Exists(settingsFile))
+                _settings = JsonSerializer.Deserialize<PluginSettings>(File.ReadAllText(settingsFile)) ?? new PluginSettings();
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Failed to load settings, using defaults", ex);
+            _settings = new PluginSettings();
+        }
+
+        _log.FileEnabled = _settings.LoggingEnabled;
+    }
+
+    private void SaveSettings()
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(GetSettingsFilePath(), json);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Failed to save settings", ex);
+        }
+    }
+
     private string GetCacheFilePath()
     {
         var filename = _currentCharacterId != 0 ? $"quest_cache_{_currentCharacterId}.json" : "quest_cache.json";
@@ -1040,7 +1211,13 @@ public class Plugin : IDdoPlugin
             var preservedCompletions = _completedQuests
                 .Where(c => !sdkCompletedDids.Contains(c.QuestDid))
                 .ToList();
-            
+
+            // The snapshot only says Elite for a Reaper run (and is stale until the next login), so
+            // remember what was already recorded to avoid overwriting it with a lower difficulty
+            var previousByKey = new Dictionary<string, QuestCompletion>();
+            foreach (var previous in _completedQuests.Where(c => sdkCompletedDids.Contains(c.QuestDid)))
+                previousByKey[CompletionKey(previous.QuestDid, previous.QuestLevel)] = previous;
+
             _completedQuests.Clear();
             
             // Add back preserved completions (chain dungeon completions detected in real-time)
@@ -1089,7 +1266,7 @@ public class Plugin : IDdoPlugin
                             if (shouldInclude)
                             {
                                 var (questId, matched) = ConvertToQuestId(questName, level);
-                                _completedQuests.Add(new QuestCompletion
+                                AddKeepingHigherDifficulty(previousByKey, new QuestCompletion
                                 {
                                     QuestDid = quest.QuestDid,
                                     QuestName = questName,
@@ -1107,7 +1284,7 @@ public class Plugin : IDdoPlugin
                     {
                         // Single version quest - add normally
                         var (questId, matched) = ConvertToQuestId(questName, baseLevel);
-                        _completedQuests.Add(new QuestCompletion
+                        AddKeepingHigherDifficulty(previousByKey, new QuestCompletion
                         {
                             QuestDid = quest.QuestDid,
                             QuestName = questName,
@@ -1124,9 +1301,27 @@ public class Plugin : IDdoPlugin
 
             _log.Info($"Processed {_completedQuests.Count} completed quests, {_completedQuests.Count(q => q.MatchedInDdoqt)} matched in DDOQT");
         }
-        
+
         // Save to cache file for persistence across DH restarts
         SaveQuestDataToFile();
+    }
+
+    private static string CompletionKey(uint questDid, int questLevel) => $"{questDid}:{questLevel}";
+
+    /// <summary>
+    /// Adds a completion rebuilt from the quest records, keeping the difficulty and date already
+    /// recorded for that quest and level when they were higher. Call with _questLock held.
+    /// </summary>
+    private void AddKeepingHigherDifficulty(Dictionary<string, QuestCompletion> previousByKey, QuestCompletion completion)
+    {
+        if (previousByKey.TryGetValue(CompletionKey(completion.QuestDid, completion.QuestLevel), out var previous) &&
+            GetDifficultyRank(previous.Difficulty) >= GetDifficultyRank(completion.Difficulty))
+        {
+            completion.Difficulty = previous.Difficulty;
+            completion.CompletedDate = previous.CompletedDate;
+        }
+
+        _completedQuests.Add(completion);
     }
 
     public IEnumerable<QuestCompletion> GetCompletedQuests()
@@ -1137,15 +1332,8 @@ public class Plugin : IDdoPlugin
         }
     }
 
-    public IPluginUI? GetPluginUI()
+    public void Dispose()
     {
-        return _ui;
-    }
-
-    public void Terminate()
-    {
-        _eventRegistration?.Dispose();
-        _eventRegistration = null;
         _log.Info("Quest Tracker plugin terminated");
     }
 }
@@ -1163,6 +1351,14 @@ public class QuestCompletion
     public int CurrentFavor { get; set; }
     public int QuestLevel { get; set; }
     public bool MatchedInDdoqt { get; set; }
+}
+
+/// <summary>
+/// Player settings, saved as settings.json in the plugin folder
+/// </summary>
+public class PluginSettings
+{
+    public bool LoggingEnabled { get; set; }
 }
 
 /// <summary>

@@ -294,6 +294,7 @@ public static class QuestVariantLookup
         { "Flocked Together", new[] { 11, 37 } },
         { "For Want of a Heart", new[] { 11, 37 } },
         { "A Blood Pact", new[] { 11, 37 } },
+        { "Raiding the Raiders", new[] { 11, 37 } },
     };
 
     public static int[]? GetVariantLevels(string questName)

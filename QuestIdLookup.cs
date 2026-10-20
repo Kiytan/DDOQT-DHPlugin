@@ -865,6 +865,9 @@ public static class QuestIdLookup
         { ("For Want of a Heart", 37), "for_want_of_a_heart_level_37" },
         { ("A Blood Pact", 11), "a_blood_pact_level_11" },
         { ("A Blood Pact", 37), "a_blood_pact_level_37" },
+        { ("Raiding the Raiders", 11), "raiding_the_raiders_level_11" },
+        { ("Raiding the Raiders", 37), "raiding_the_raiders_level_37" },
+        { ("Terror of the Demon Lords", 37), "terror_of_the_demon_lords" },
     };
 
     public static string? GetQuestId(string questName, int level)

@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Signed documents must never have their line endings converted, or the signature breaks.
+# The entitlement in particular is issued by the Dungeon Helper team and cannot be re-signed here.
+*.entitlement -text
+*.sig         -text
+*.manifest    -text
+*.sh          text eol=lf
