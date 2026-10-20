@@ -1,0 +1,11 @@
+{
+  "serial": "DH-COMMUNITY-DDOQT-20261020",
+  "pluginId": "f006af62-5b8a-4298-9017-e4e588df4d7d",
+  "pluginName": "DDOQT",
+  "authorId": "auth_120adf26",
+  "authorName": "Kiytan",
+  "authorKeyFingerprint": "2940ED981C11D58DC9211362149DF6CB9F62C17B72F171451020AF3AAC8C0EAC",
+  "tier": "community",
+  "notBefore": "2026-10-20T00:00:00Z",
+  "notAfter": "2027-10-20T00:00:00Z"
+}

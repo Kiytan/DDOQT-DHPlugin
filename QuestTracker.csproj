@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputType>Library</OutputType>
-    <AssemblyName>QuestTracker</AssemblyName>
+    <AssemblyName>DDOQT</AssemblyName>
     <RootNamespace>QuestTracker</RootNamespace>
     <Version>2.0.0</Version>
     <Authors>Kiytan</Authors>
@@ -27,15 +27,15 @@
 
         dotnet publish -c Release
 
-    and it writes dist/QuestTracker_<version>.zip. The layout and paperwork follow the DH team's
+    and it writes dist/DDOQT_<version>.zip. The layout and paperwork follow the DH team's
     Aligner plugin (gitlab.com/VaultOfKundarak/aligner), the reference for third-party DH5 plugins:
 
       * the zip is FLAT. DH4's plugins/QuestTracker/ prefix is refused by DH5.
-      * QuestTracker.dll is Authenticode-signed with the author key (osslsigncode).
-      * QuestTracker.pem is the author public key, derived from the same pfx.
-      * QuestTracker.manifest lists a SHA-256 of every file in the zip, and QuestTracker.manifest.sig
+      * DDOQT.dll is Authenticode-signed with the author key (osslsigncode).
+      * DDOQT.pem is the author public key, derived from the same pfx.
+      * DDOQT.manifest lists a SHA-256 of every file in the zip, and DDOQT.manifest.sig
         signs it. DH5 compares the archive against the manifest in both directions at install.
-      * QuestTracker.entitlement(.sig), issued by the DH team, binds the [PluginId] to the author key.
+      * DDOQT.entitlement(.sig), issued by the DH team, binds the [PluginId] to the author key.
         Without it DH5 refuses the install. Kept in entitlement/ and never edited.
       * plugin.metadata names the update feed every install polls permanently.
 
@@ -43,7 +43,7 @@
     Without it the build still produces a zip, as a compile check, but Dungeon Helper will refuse it.
 
     Set DH_DATA_DIR to Dungeon Helper's data folder (the one holding plugins/) to also copy the bundle
-    straight into plugins/QuestTracker for testing.
+    straight into plugins/DDOQT for testing.
   -->
   <PropertyGroup>
     <DhPluginName>$(AssemblyName)</DhPluginName>

@@ -6,7 +6,7 @@
 #
 # Usage: DH_AUTHOR_PFX=/path/to/author.pfx scripts/update-feed.sh <version>
 #
-# Run it after `dotnet publish -c Release` has built dist/QuestTracker_<version>.zip, and after that zip
+# Run it after `dotnet publish -c Release` has built dist/DDOQT_<version>.zip, and after that zip
 # has been attached to a GitHub release tagged <version>. The live feed is fetched and this version
 # added to it, so older versions stay listed. Then copy dist/feed/V2/ to the V2/ folder of the gh-pages
 # branch and push.
@@ -15,7 +15,7 @@
 # whose .sig is missing or does not verify, so both files must always be published together.
 set -euo pipefail
 
-PluginName="QuestTracker"
+PluginName="DDOQT"
 FeedUrl="https://kiytan.github.io/DDOQT-DHPlugin/V2/plugin.metadata"
 ProductInfoUrl="https://github.com/Kiytan/DDOQT-DHPlugin"
 ReleaseBaseUrl="https://github.com/Kiytan/DDOQT-DHPlugin/releases/download"
