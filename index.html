@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDOQT for Dungeon Helper</title>
+<meta name="description" content="A Dungeon Helper plugin that tracks your completed DDO quests and syncs them to the DDO Quest Tracker.">
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --text: #23252b;
+    --muted: #5d606a;
+    --accent: #8a6d12;
+    --card: #ffffff;
+    --border: #e1ddd2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1f2129;
+      --text: #e0e0e0;
+      --muted: #a4a7b0;
+      --accent: #d4af37;
+      --card: #252832;
+      --border: #363a46;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 42rem; margin: 0 auto; padding: 3rem 1rem 4rem; }
+  h1 { color: var(--accent); font-size: 2rem; line-height: 1.2; margin: 0 0 0.5rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 0.5rem; }
+  p, li { color: var(--text); }
+  .lead { color: var(--muted); font-size: 1.1rem; margin-top: 0; }
+  a { color: var(--accent); }
+  .button {
+    display: inline-block;
+    margin: 1rem 0 0.5rem;
+    padding: 0.6rem 1.2rem;
+    border-radius: 6px;
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .note {
+    margin-top: 2.5rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  code { font-size: 0.9em; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>DDOQT for Dungeon Helper</h1>
+  <p class="lead">A <a href="https://dungeonhelper.com">Dungeon Helper</a> plugin that tracks the quests you complete in DDO and syncs them to the <a href="https://qt.ddotools.xyz">DDO Quest Tracker</a>.</p>
+
+  <a class="button" href="https://github.com/Kiytan/DDOQT-DHPlugin/releases/latest">Download the latest release</a>
+
+  <h2>Installing</h2>
+  <ol>
+    <li>Download <code>DDOQT_&lt;version&gt;.zip</code> from the latest release.</li>
+    <li>In Dungeon Helper 5, go to <strong>Settings → "Add plugin from zip file"</strong> and pick it.</li>
+    <li>Log in to a character and open the Quest Tracker window from the toolbar.</li>
+  </ol>
+  <p>Once installed, Dungeon Helper keeps the plugin up to date by itself.</p>
+
+  <h2>More information</h2>
+  <p>Usage, known issues and build instructions are in the <a href="https://github.com/Kiytan/DDOQT-DHPlugin">project's README on GitHub</a>.</p>
+
+  <p class="note">This site also hosts the plugin's update feed, which Dungeon Helper checks for new versions.</p>
+</main>
+</body>
+</html>

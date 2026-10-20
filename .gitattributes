@@ -1,0 +1,3 @@
+# The update feed and its signature are served byte for byte; any conversion breaks the signature
+*.metadata -text
+*.sig      -text
