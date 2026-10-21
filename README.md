@@ -19,7 +19,8 @@ so you can just hit sync again to update qt.
 
 There is also an **Export CSV** button, which saves your completed quests as a spreadsheet you can open in Excel or similar. Each row has the quest name, DDOQT quest ID, level, difficulty, favour and whether it matched a quest on qt.ddotools.xyz. Quests that didn't match are included too, so the CSV is a handy way to spot anything the site isn't picking up. A favour of 0 can mean the favour isn't known (for example, some chain quest dungeons) rather than none.
 
-<img width="724" height="458" alt="DDOQTig" src="https://github.com/user-attachments/assets/ffb04937-9cd4-4a25-b372-43a9889f9586" />
+<img width="503" height="347" alt="image" src="https://github.com/user-attachments/assets/bc75c2cd-7129-4690-80dd-fdf932791b0e" />
+
 
 I've mainly done this as I find using qt much easier to sort through quests I'm missing for certain favor, or level appropriate quests than using the adventure compendium in game.
 
