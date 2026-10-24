@@ -871,8 +871,9 @@ public class Plugin : IPlugin
 
     private bool IsQuestCompleted(IStoryQuestRecord quest)
     {
-        // Quest is completed if HighestDifficultyCompleted has a value > 0
-        return quest.HighestDifficultyCompleted > 0;
+        // Quest is completed if HighestDifficultyCompleted has a value > 0. Solo is 0 though, the same as
+        // never run, so solo-only quests (The Miller's Debt, Arachnophobia) only show up through their favour
+        return quest.HighestDifficultyCompleted > 0 || quest.CurrentFavor > 0;
     }
 
     /// <summary>
@@ -924,7 +925,7 @@ public class Plugin : IPlugin
     private string DetermineDifficulty(IStoryQuestRecord quest)
     {
         // HighestDifficultyCompleted encoding from the VoK SDK:
-        // Heroic tier: 1 = Normal, 2 = Hard, 3 = Elite, 4 = Reaper
+        // Heroic tier: 0 = Solo (counted as Normal), 1 = Normal, 2 = Hard, 3 = Elite, 4 = Reaper
         // Higher tier (Epic or Legendary): 5 = Normal, 6 or 9 = Hard, 10 = Elite, 20 = Reaper
         return quest.HighestDifficultyCompleted switch
         {
