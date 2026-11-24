@@ -542,7 +542,6 @@ public class Plugin : IPlugin
         {
             var questName = overriddenName ?? quest.QuestName ?? "";
             var baseLevel = (int)quest.QuestLevel;
-            var completedDate = DateTime.UtcNow.ToString("o");
             var favor = quest.CurrentFavor ?? 0;
 
             // Check if this quest has heroic/epic/legendary variants
@@ -584,7 +583,6 @@ public class Plugin : IPlugin
                             if (GetDifficultyRank(difficulty) > GetDifficultyRank(existingEntry.Difficulty))
                             {
                                 existingEntry.Difficulty = difficulty;
-                                existingEntry.CompletedDate = completedDate;
                                 existingEntry.CurrentFavor = favor;
                                 _log.Info($"Upgraded existing quest variant: {questName} (Level {level}) to {difficulty}");
                                 SaveQuestDataToFile();
@@ -599,7 +597,6 @@ public class Plugin : IPlugin
                                 QuestName = questName,
                                 QuestId = questId,
                                 Difficulty = difficulty,
-                                CompletedDate = completedDate,
                                 CurrentFavor = favor,
                                 QuestLevel = level,
                                 MatchedInDdoqt = matched
@@ -624,7 +621,6 @@ public class Plugin : IPlugin
                     if (GetDifficultyRank(difficulty) > GetDifficultyRank(existingEntry.Difficulty))
                     {
                         existingEntry.Difficulty = difficulty;
-                        existingEntry.CompletedDate = completedDate;
                         existingEntry.CurrentFavor = favor;
                         _log.Info($"Upgraded existing quest: {questName} (Level {baseLevel}) to {difficulty}");
                         SaveQuestDataToFile();
@@ -639,7 +635,6 @@ public class Plugin : IPlugin
                         QuestName = questName,
                         QuestId = questId,
                         Difficulty = difficulty,
-                        CompletedDate = completedDate,
                         CurrentFavor = favor,
                         QuestLevel = baseLevel,
                         MatchedInDdoqt = matched
@@ -656,7 +651,6 @@ public class Plugin : IPlugin
     {
         lock (_questLock)
         {
-            var completedDate = DateTime.UtcNow.ToString("o");
 
             // Resolve aliases before variant lookup (chain titles like "The Dragons' Hand: …" are not variant keys)
             var resolvedName = NormalizeApostrophes(questName.Trim());
@@ -678,7 +672,6 @@ public class Plugin : IPlugin
                 if (GetDifficultyRank(difficulty) > GetDifficultyRank(existingEntry.Difficulty))
                 {
                     existingEntry.Difficulty = difficulty;
-                    existingEntry.CompletedDate = completedDate;
                     _log.Info($"Upgraded existing quest (by name): {resolvedName} (Level {baseLevel}) to {difficulty}");
                     SaveQuestDataToFile();
                 }
@@ -692,7 +685,6 @@ public class Plugin : IPlugin
                     QuestName = resolvedName,
                     QuestId = questId,
                     Difficulty = difficulty,
-                    CompletedDate = completedDate,
                     CurrentFavor = 0, // Unknown for chain quest dungeons
                     QuestLevel = baseLevel,
                     MatchedInDdoqt = matched
@@ -1120,7 +1112,7 @@ public class Plugin : IPlugin
     {
         lock (_questLock)
         {
-            // Build the DDOQT format: { questId: { difficulty, completedDate } }
+            // Build the DDOQT format: { questId: { difficulty } }
             var exportData = new Dictionary<string, DdoqtCompletion>();
 
             foreach (var quest in _completedQuests)
@@ -1135,8 +1127,7 @@ public class Plugin : IPlugin
                 {
                     exportData[quest.QuestId] = new DdoqtCompletion
                     {
-                        difficulty = quest.Difficulty,
-                        completedDate = quest.CompletedDate
+                        difficulty = quest.Difficulty
                     };
                 }
             }
@@ -1375,7 +1366,6 @@ public class Plugin : IPlugin
                     var baseLevel = (int)quest.QuestLevel;
                     var rawDifficulty = quest.HighestDifficultyCompleted;
                     var difficultyStr = DetermineDifficulty(quest);
-                    var completedDate = DateTime.UtcNow.ToString("o");
                     var favor = quest.CurrentFavor ?? 0;
                     
                     // Check if this quest has heroic/epic/legendary variants
@@ -1409,7 +1399,6 @@ public class Plugin : IPlugin
                                     QuestName = questName,
                                     QuestId = questId,
                                     Difficulty = difficultyStr,
-                                    CompletedDate = completedDate,
                                     CurrentFavor = favor,
                                     QuestLevel = level,
                                     MatchedInDdoqt = matched
@@ -1427,7 +1416,6 @@ public class Plugin : IPlugin
                             QuestName = questName,
                             QuestId = questId,
                             Difficulty = difficultyStr,
-                            CompletedDate = completedDate,
                             CurrentFavor = favor,
                             QuestLevel = baseLevel,
                             MatchedInDdoqt = matched
@@ -1446,8 +1434,8 @@ public class Plugin : IPlugin
     private static string CompletionKey(uint questDid, int questLevel) => $"{questDid}:{questLevel}";
 
     /// <summary>
-    /// Adds a completion rebuilt from the quest records, keeping the difficulty and date already
-    /// recorded for that quest and level when they were higher. Call with _questLock held.
+    /// Adds a completion rebuilt from the quest records, keeping the difficulty already recorded
+    /// for that quest and level when it was higher. Call with _questLock held.
     /// </summary>
     private void AddKeepingHigherDifficulty(Dictionary<string, QuestCompletion> previousByKey, QuestCompletion completion)
     {
@@ -1455,7 +1443,6 @@ public class Plugin : IPlugin
             GetDifficultyRank(previous.Difficulty) >= GetDifficultyRank(completion.Difficulty))
         {
             completion.Difficulty = previous.Difficulty;
-            completion.CompletedDate = previous.CompletedDate;
         }
 
         _completedQuests.Add(completion);
@@ -1484,7 +1471,6 @@ public class QuestCompletion
     public string QuestName { get; set; } = "";
     public string QuestId { get; set; } = "";
     public string Difficulty { get; set; } = "Normal";
-    public string CompletedDate { get; set; } = "";
     public int CurrentFavor { get; set; }
     public int QuestLevel { get; set; }
     public bool MatchedInDdoqt { get; set; }
@@ -1504,5 +1490,4 @@ public class PluginSettings
 public class DdoqtCompletion
 {
     public string difficulty { get; set; } = "Normal";
-    public string completedDate { get; set; } = "";
 }
