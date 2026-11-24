@@ -37,3 +37,6 @@ signing/
 
 # Plugin log, if a test build is ever run from the repo folder
 QuestTracker.log*
+
+# Local release script (builds, publishes the GitHub release and pushes the update feed)
+scripts/release.sh

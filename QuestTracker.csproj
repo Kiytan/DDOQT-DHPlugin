@@ -6,7 +6,7 @@
     <OutputType>Library</OutputType>
     <AssemblyName>DDOQT</AssemblyName>
     <RootNamespace>QuestTracker</RootNamespace>
-    <Version>2.0.1</Version>
+    <Version>2.1.0</Version>
     <Authors>Kiytan</Authors>
     <Description>Tracks completed quests and exports for DDOQT (qt.ddotools.xyz)</Description>
   </PropertyGroup>
@@ -14,7 +14,7 @@
   <ItemGroup>
     <!-- Dungeon Helper provides VoK.Sdk (with ImGui.NET inside it), log4net and Newtonsoft.Json at
          runtime, so none of them ship in the bundle. -->
-    <PackageReference Include="VoK.Sdk" Version="5.0.0" />
+    <PackageReference Include="VoK.Sdk" Version="5.3.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -29,6 +29,11 @@ public class Plugin : IPlugin
     // Stores current quest data
     private List<QuestCompletion> _completedQuests = new();
     private IReadOnlyCollection<IStoryQuestRecord>? _lastQuestRecords;
+    // The character _lastQuestRecords belong to, 0 when they arrived before any character was known
+    private ulong _lastQuestRecordsCharacterId;
+    // Completions recorded live since this character logged in (keys from CompletionKey). The login
+    // snapshot can't show these yet, so they're the only in-record quests a re-process may keep.
+    private readonly HashSet<string> _sessionCompletionKeys = new();
     private readonly object _questLock = new();
 
     // Track current instance quest for completion detection
@@ -144,8 +149,11 @@ public class Plugin : IPlugin
 
         _log.Info($"Quest Tracker plugin {GetType().Assembly.GetName().Version} initialized");
 
-        // Load cached quest data from previous session
-        LoadQuestDataFromFile();
+        // If the plugin was loaded with a character already logged in, show that character's cache.
+        // Otherwise nothing is shown until OnLogin says whose quests to load.
+        var liveCharacterId = GetLiveCharacterId();
+        if (liveCharacterId != 0)
+            SwitchCharacter(liveCharacterId);
         _ui.RefreshQuestCount();
 
         // Subscribe to events
@@ -153,6 +161,7 @@ public class Plugin : IPlugin
         {
             eventProvider.OnAllStoryQuestRecords.AddHandler(OnQuestRecordsReceived);
             eventProvider.OnLogin.AddHandler(OnLoginReceived);
+            eventProvider.OnLogout.AddHandler(OnLogoutReceived);
             eventProvider.OnMapAreaChange.AddHandler(OnMapAreaChange);
             eventProvider.OnAddAlert.AddHandler(OnAddAlert);
             eventProvider.OnPortalActivate.AddHandler(OnPortalActivate);
@@ -598,6 +607,7 @@ public class Plugin : IPlugin
                             _log.Info($"Added newly completed quest variant: {questName} (Level {level}, {difficulty})");
                             SaveQuestDataToFile();
                         }
+                        _sessionCompletionKeys.Add(CompletionKey(quest.QuestDid, level));
                     }
                 }
             }
@@ -637,6 +647,7 @@ public class Plugin : IPlugin
                     _log.Info($"Added newly completed quest: {questName} (Level {baseLevel}, {difficulty})");
                     SaveQuestDataToFile();
                 }
+                _sessionCompletionKeys.Add(CompletionKey(quest.QuestDid, baseLevel));
             }
         }
     }
@@ -689,43 +700,140 @@ public class Plugin : IPlugin
                 _log.Info($"Added newly completed quest (by name): {resolvedName} (Level {baseLevel}, {difficulty})");
                 SaveQuestDataToFile();
             }
+            _sessionCompletionKeys.Add(CompletionKey(questDid, baseLevel));
         }
     }
     
     private Task OnLoginReceived(ulong characterId)
     {
         _log.Info($"Character login - character ID {characterId}");
-        
+
+        try
+        {
+            // A no-op when the quest records for this character already arrived and switched to it
+            SwitchCharacter(characterId);
+
+            // On a first login the records can arrive before OnLogin. They're this character's if
+            // they were tagged with it, or arrived while no character was logged in. Records tagged
+            // with another character are the previous character's, left over from before a swap.
+            IReadOnlyCollection<IStoryQuestRecord>? records;
+            lock (_questLock)
+            {
+                records = _lastQuestRecords;
+                if (records != null && _lastQuestRecordsCharacterId != characterId && _lastQuestRecordsCharacterId != 0)
+                {
+                    _log.Info($"Ignoring quest records held for character {_lastQuestRecordsCharacterId}, waiting for this character's");
+                    _lastQuestRecords = null;
+                    _lastQuestRecordsCharacterId = 0;
+                    records = null;
+                }
+            }
+
+            if (records != null)
+            {
+                _log.Info("Processing quest records received before login");
+                ApplyQuestRecords(records, characterId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Error handling character login", ex);
+        }
+
+        _ui?.RefreshQuestCount();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Back at character selection. Drop everything about the character so the next login starts clean.
+    /// </summary>
+    private Task OnLogoutReceived()
+    {
+        _log.Info($"Character logout - character ID {_currentCharacterId}");
+
         lock (_questLock)
         {
+            _currentCharacterId = 0;
+            _completedQuests = new List<QuestCompletion>();
+            _sessionCompletionKeys.Clear();
+            _questRecordsByDid = new Dictionary<uint, IStoryQuestRecord>();
+            _lastQuestRecords = null;
+            _lastQuestRecordsCharacterId = 0;
+        }
+
+        ResetInstanceState();
+        _ui?.RefreshQuestCount();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The character logged in now according to the game, 0 at character selection or if unknown
+    /// </summary>
+    private ulong GetLiveCharacterId()
+    {
+        try
+        {
+            return _gameDataProvider?.GetCurrentCharacterId() ?? 0;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Failed to read the current character ID", ex);
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Makes characterId the current character: clears the previous character's quests and loads
+    /// this one's cache. Does nothing if it's already the current character.
+    /// </summary>
+    private void SwitchCharacter(ulong characterId)
+    {
+        if (characterId == 0) return;
+
+        lock (_questLock)
+        {
+            if (characterId == _currentCharacterId) return;
+
+            _log.Info($"Switching character from {_currentCharacterId} to {characterId}");
             _currentCharacterId = characterId;
-            
-            // Clear previous character's state to prevent cross-contamination
-            _completedQuests.Clear();
-            _questRecordsByDid.Clear();
-            
-            // Load character-specific cache
+            _completedQuests = new List<QuestCompletion>();
+            _sessionCompletionKeys.Clear();
+            _questRecordsByDid = new Dictionary<uint, IStoryQuestRecord>();
             LoadQuestDataFromFile();
         }
-        
-        // If quest records were already received (fires before login), re-process them
-        // now that we have the correct character ID for cache file naming
-        if (_lastQuestRecords != null)
+
+        ResetInstanceState();
+    }
+
+    private void ResetInstanceState()
+    {
+        _currentInstanceQuestDid = null;
+        _currentQuestAreaId = null;
+        _currentInstanceDifficulty = "Elite";
+        _ui?.UpdateInstanceDisplay(null);
+    }
+
+    /// <summary>
+    /// Rebuilds the current character's completed quests from a set of quest records
+    /// </summary>
+    private void ApplyQuestRecords(IReadOnlyCollection<IStoryQuestRecord> questRecords, ulong characterId)
+    {
+        lock (_questLock)
         {
-            _log.Info("Re-processing quest records after login (received before character ID was set)");
-            _questRecordsByDid = _lastQuestRecords.ToDictionary(q => q.QuestDid, q => q);
-            ProcessQuestRecords(_lastQuestRecords);
-            _ui?.RefreshQuestCount();
+            _lastQuestRecords = questRecords;
+            _lastQuestRecordsCharacterId = characterId;
+            _questRecordsByDid = questRecords.ToDictionary(q => q.QuestDid, q => q);
         }
-        
-        return Task.CompletedTask;
+
+        GenerateQuestNameMismatchReport(questRecords);
+        ProcessQuestRecords(questRecords);
+        _ui?.RefreshQuestCount();
     }
 
     private Task OnQuestRecordsReceived(IReadOnlyCollection<IStoryQuestRecord> questRecords)
     {
         try
         {
-            _lastQuestRecords = questRecords;
 
             // How often each raw HighestDifficultyCompleted value appears, to check DetermineDifficulty's
             // mapping against real data (the SDK's DifficultyType has Reaper as 11 and Epic_Reaper as 12)
@@ -745,14 +853,27 @@ public class Plugin : IPlugin
             if (unrecognisedText.Length > 0)
                 _log.Info($"Quests with a raw difficulty DetermineDifficulty doesn't map: {unrecognisedText}");
 
-            // Build DID lookup dictionary for all quests
-            _questRecordsByDid = questRecords.ToDictionary(q => q.QuestDid, q => q);
-            
-            // Generate mismatch report for debugging name differences
-            GenerateQuestNameMismatchReport(questRecords);
-            
-            ProcessQuestRecords(questRecords);
-            _ui?.RefreshQuestCount();
+            // Work out whose records these are. The game's own answer comes first. Failing that, the
+            // character from OnLogin, which OnLogout resets, so after a logout this stays 0.
+            var owner = GetLiveCharacterId();
+            if (owner == 0)
+                owner = _currentCharacterId;
+
+            if (owner == 0)
+            {
+                // Before the first OnLogin. Hold the records until OnLogin says whose they are.
+                lock (_questLock)
+                {
+                    _lastQuestRecords = questRecords;
+                    _lastQuestRecordsCharacterId = 0;
+                }
+                _log.Info("Quest records arrived before login, holding them until the character is known");
+                return Task.CompletedTask;
+            }
+
+            // On a character swap the new records can beat OnLogin, so switch here too
+            SwitchCharacter(owner);
+            ApplyQuestRecords(questRecords, owner);
         }
         catch (Exception ex)
         {
@@ -857,7 +978,7 @@ public class Plugin : IPlugin
     /// </summary>
     public void RefreshQuestData()
     {
-        if (_lastQuestRecords != null)
+        if (_lastQuestRecords != null && _currentCharacterId != 0 && _lastQuestRecordsCharacterId == _currentCharacterId)
         {
             _log.Info("Manually refreshing quest data");
             ProcessQuestRecords(_lastQuestRecords);
@@ -1149,17 +1270,23 @@ public class Plugin : IPlugin
 
     private string GetCacheFilePath()
     {
-        var filename = _currentCharacterId != 0 ? $"quest_cache_{_currentCharacterId}.json" : "quest_cache.json";
-        return Path.Combine(_folder ?? "", filename);
+        return Path.Combine(_folder ?? "", $"quest_cache_{_currentCharacterId}.json");
     }
-    
+
     private void SaveQuestDataToFile()
     {
         try
         {
-            var cacheFile = GetCacheFilePath();
             lock (_questLock)
             {
+                // Nothing to save to without a character, and guessing one is how caches get mixed up
+                if (_currentCharacterId == 0)
+                {
+                    _log.Warn("Not saving quests, no character is logged in");
+                    return;
+                }
+
+                var cacheFile = GetCacheFilePath();
                 var json = JsonSerializer.Serialize(_completedQuests, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(cacheFile, json);
                 _log.Info($"Saved {_completedQuests.Count} quests to cache file");
@@ -1171,32 +1298,34 @@ public class Plugin : IPlugin
         }
     }
     
+    /// <summary>
+    /// Replaces the quest list with the current character's cache, or an empty list if there isn't one
+    /// </summary>
     private void LoadQuestDataFromFile()
     {
+        var quests = new List<QuestCompletion>();
         try
         {
             var cacheFile = GetCacheFilePath();
-            if (File.Exists(cacheFile))
+            if (_currentCharacterId != 0 && File.Exists(cacheFile))
             {
                 var json = File.ReadAllText(cacheFile);
-                var quests = JsonSerializer.Deserialize<List<QuestCompletion>>(json);
-                if (quests != null && quests.Count > 0)
-                {
-                    lock (_questLock)
-                    {
-                        _completedQuests = quests;
-                    }
-                    _log.Info($"Loaded {quests.Count} quests from cache file");
-                }
+                quests = JsonSerializer.Deserialize<List<QuestCompletion>>(json) ?? new List<QuestCompletion>();
+                _log.Info($"Loaded {quests.Count} quests from cache file for character {_currentCharacterId}");
             }
             else
             {
-                _log.Info("No quest cache file found - will load on character login");
+                _log.Info($"No quest cache file for character {_currentCharacterId}, waiting for the quest records");
             }
         }
         catch (Exception ex)
         {
             _log.Error("Failed to load quest data from file", ex);
+        }
+
+        lock (_questLock)
+        {
+            _completedQuests = quests;
         }
     }
 
@@ -1204,14 +1333,21 @@ public class Plugin : IPlugin
     {
         lock (_questLock)
         {
-            // Preserve real-time completions that the SDK snapshot doesn't reflect yet.
-            // Only exclude completions whose DID the SDK shows as *completed* (HighestDifficultyCompleted > 0).
-            // Quests completed during this session won't be in the SDK snapshot.
+            // Keep completions the records can't show. These are chain dungeons (their DIDs aren't in the
+            // records at all) and quests completed live since login, which the login snapshot predates.
+            // Anything else the records list as not completed is dropped. That also cleans out quests
+            // a cache picked up from another character.
+            var recordDids = new HashSet<uint>(questRecords.Select(q => q.QuestDid));
             var sdkCompletedDids = new HashSet<uint>(
                 questRecords.Where(q => IsQuestCompleted(q)).Select(q => q.QuestDid));
             var preservedCompletions = _completedQuests
-                .Where(c => !sdkCompletedDids.Contains(c.QuestDid))
+                .Where(c => !sdkCompletedDids.Contains(c.QuestDid) &&
+                            (!recordDids.Contains(c.QuestDid) ||
+                             _sessionCompletionKeys.Contains(CompletionKey(c.QuestDid, c.QuestLevel))))
                 .ToList();
+            var droppedCount = _completedQuests.Count(c => !sdkCompletedDids.Contains(c.QuestDid)) - preservedCompletions.Count;
+            if (droppedCount > 0)
+                _log.Info($"Dropped {droppedCount} cached completions that this character's quest records show as not completed");
 
             // The snapshot only says Elite for a Reaper run (and is stale until the next login), so
             // remember what was already recorded to avoid overwriting it with a lower difficulty
