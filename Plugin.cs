@@ -340,7 +340,7 @@ public class Plugin : IPlugin
             var ranHigherTier = RanHigherTier(report);
             _log.Info($"Experience report difficulty: {difficulty}, higher tier: {ranHigherTier}");
 
-            await HandleQuestCompletion(difficulty, ranHigherTier);
+            await HandleQuestCompletion(difficulty, ranHigherTier, report.QuestName);
         }
         catch (Exception ex)
         {
@@ -468,7 +468,8 @@ public class Plugin : IPlugin
     
     /// <param name="difficulty">The difficulty the quest was completed on</param>
     /// <param name="ranHigherTier">True for an epic or legendary run, false for heroic, null if unknown</param>
-    private async Task HandleQuestCompletion(string difficulty, bool? ranHigherTier)
+    /// <param name="reportQuestName">The quest the Experience Report names, null when there was no report</param>
+    private async Task HandleQuestCompletion(string difficulty, bool? ranHigherTier, string? reportQuestName = null)
     {
         try
         {
@@ -492,8 +493,30 @@ public class Plugin : IPlugin
                 didSource = "currentDid";
             }
             
+            // The tracked DID is the last quest entered, which is stale when a quest completes after
+            // leaving its dungeon (handed in to an NPC in town, say). The report names the quest that
+            // actually completed, so make sure the DID agrees with it.
+            if (!string.IsNullOrWhiteSpace(reportQuestName))
+            {
+                var (matchedDid, matchedSource) = FindDidForReportedQuest(reportQuestName,
+                    (questDid, didSource), (instanceDid, "instanceDid"), (currentDid, "currentDid"));
+
+                if (matchedDid.HasValue && matchedDid != questDid)
+                {
+                    _log.Warn($"Experience report is for '{reportQuestName}' but the {didSource} DID {questDid} is " +
+                              $"'{DescribeQuest(questDid)}', crediting DID {matchedDid} from {matchedSource} instead");
+                    questDid = matchedDid;
+                    didSource = matchedSource;
+                }
+                else if (!matchedDid.HasValue)
+                {
+                    _log.Warn($"Couldn't find the Experience Report's quest '{reportQuestName}', crediting " +
+                              $"'{DescribeQuest(questDid)}' (DID {questDid}) as before");
+                }
+            }
+
             _log.Info($"Quest completion - final DID: {questDid} from source: {didSource}");
-            
+
             if (questDid.HasValue && questDid.Value != 0 && _questRecordsByDid.TryGetValue(questDid.Value, out var questRecord))
             {
                 // Prefer weenie name (individual dungeon) over record name (chain name)
@@ -536,6 +559,76 @@ public class Plugin : IPlugin
         }
     }
     
+    /// <summary>
+    /// Finds the DID of the quest an Experience Report names. The candidate DIDs are tried first, in
+    /// order, then every quest record. Null if nothing has that name.
+    /// </summary>
+    private (uint? Did, string Source) FindDidForReportedQuest(string reportQuestName, params (uint? Did, string Source)[] candidates)
+    {
+        var wanted = QuestNameKey(reportQuestName);
+
+        foreach (var (did, source) in candidates)
+        {
+            if (did is > 0 && QuestNameKeys(did.Value).Contains(wanted))
+                return (did, source);
+        }
+
+        // Not one of the DIDs the game pointed at, so look through the records. Quests first, as a
+        // wilderness area or explorer record could share a name. The record names are checked before
+        // the slower weenie lookup.
+        var records = _questRecordsByDid.Values.OrderBy(r => r.QuestType == 1 ? 0 : 1).ToList();
+        var byRecordName = records.FirstOrDefault(r =>
+            QuestNameKey(r.QuestName) == wanted || QuestNameKey(r.AdventureName) == wanted);
+        if (byRecordName != null)
+            return (byRecordName.QuestDid, "report name");
+
+        var byWeenieName = records.FirstOrDefault(r => QuestNameKey(GetActualQuestName(r.QuestDid)) == wanted);
+        if (byWeenieName != null)
+            return (byWeenieName.QuestDid, "report name");
+
+        return (null, "none");
+    }
+
+    /// <summary>
+    /// Every name a quest DID goes by (weenie, record and adventure names), as comparison keys
+    /// </summary>
+    private HashSet<string> QuestNameKeys(uint questDid)
+    {
+        var keys = new HashSet<string> { QuestNameKey(GetActualQuestName(questDid)) };
+        if (_questRecordsByDid.TryGetValue(questDid, out var record))
+        {
+            keys.Add(QuestNameKey(record.QuestName));
+            keys.Add(QuestNameKey(record.AdventureName));
+        }
+        keys.Remove("");
+        return keys;
+    }
+
+    /// <summary>
+    /// A quest name reduced for comparison: apostrophes and spacing normalised, aliases applied and
+    /// case ignored. Empty for a missing name.
+    /// </summary>
+    private static string QuestNameKey(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "";
+
+        var normalised = Regex.Replace(NormalizeApostrophes(name.Trim()), @"\s+", " ");
+        if (_questNameAliases.TryGetValue(normalised, out var alias))
+            normalised = alias;
+        return normalised.ToLowerInvariant();
+    }
+
+    private string DescribeQuest(uint? questDid)
+    {
+        if (questDid is not > 0)
+            return "no quest";
+
+        return GetActualQuestName(questDid.Value)
+               ?? (_questRecordsByDid.TryGetValue(questDid.Value, out var record) ? record.QuestName : null)
+               ?? "unknown";
+    }
+
     private void AddCompletedQuestFromRecord(IStoryQuestRecord quest, string difficulty, string? overriddenName = null, bool? ranHigherTier = null)
     {
         lock (_questLock)
@@ -1336,9 +1429,18 @@ public class Plugin : IPlugin
                             (!recordDids.Contains(c.QuestDid) ||
                              _sessionCompletionKeys.Contains(CompletionKey(c.QuestDid, c.QuestLevel))))
                 .ToList();
-            var droppedCount = _completedQuests.Count(c => !sdkCompletedDids.Contains(c.QuestDid)) - preservedCompletions.Count;
-            if (droppedCount > 0)
-                _log.Info($"Dropped {droppedCount} cached completions that this character's quest records show as not completed");
+            var dropped = _completedQuests
+                .Where(c => !sdkCompletedDids.Contains(c.QuestDid))
+                .Except(preservedCompletions)
+                .Select(c => $"{c.QuestName} (L{c.QuestLevel})")
+                .ToList();
+            if (dropped.Count > 0)
+            {
+                const int maxNamesLogged = 100;
+                var names = string.Join(", ", dropped.Take(maxNamesLogged));
+                var more = dropped.Count > maxNamesLogged ? $" and {dropped.Count - maxNamesLogged} more" : "";
+                _log.Info($"Dropped {dropped.Count} cached completions that this character's quest records show as not completed: {names}{more}");
+            }
 
             // The snapshot only says Elite for a Reaper run (and is stale until the next login), so
             // remember what was already recorded to avoid overwriting it with a lower difficulty
