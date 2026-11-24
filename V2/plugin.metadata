@@ -1,6 +1,6 @@
 {
   "PluginName": "DDOQT",
-  "CurrentVersion": "2.1.2",
+  "CurrentVersion": "2.1.3",
   "AllowedVersions": [
     {
       "Version": "2.0.0",
@@ -26,6 +26,11 @@
       "Version": "2.1.2",
       "Url": "https://github.com/Kiytan/DDOQT-DHPlugin/releases/download/2.1.2/DDOQT_2.1.2.zip",
       "Checksum": "47310E9DB4E85B19C892EEACBABA79C39F00785F8BB519A9F1A5C684A95CF8E25492B65BF960336336C7394DE9348A3B17440F77BA5950B0BEAC2D79D5C795CB"
+    },
+    {
+      "Version": "2.1.3",
+      "Url": "https://github.com/Kiytan/DDOQT-DHPlugin/releases/download/2.1.3/DDOQT_2.1.3.zip",
+      "Checksum": "00B3F004D1E1A2A4344BBC0EA42FC22FABDC8AB77ABA87DD86413D07A623E167442CE7469AF93C05DD1B7F6A1BDCDDB819B8EB792307AECB8417F37F1B658D97"
     }
   ],
   "UpdateSource": "https://kiytan.github.io/DDOQT-DHPlugin/V2/plugin.metadata",
