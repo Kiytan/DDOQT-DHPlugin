@@ -39,7 +39,10 @@ public class Plugin : IPlugin
     // Track current instance quest for completion detection
     private uint? _currentInstanceQuestDid;
     private uint? _currentQuestAreaId;
-    private string _currentInstanceDifficulty = "Elite";
+    // The difficulty to credit when a completion has no Experience Report. Portals and alerts don't
+    // give it in DH5, so it's usually unknown; Normal then, as a low guess is corrected by the quest
+    // records at the next login but a high one would stick.
+    private string _currentInstanceDifficulty = "Normal";
 
     // When the last quest Experience Report arrived. A "Quest Completed" alert only records the
     // completion itself if no report turns up around the same time.
@@ -124,6 +127,15 @@ public class Plugin : IPlugin
         { "Temple of Elemental Evil: Fire Node", "ToEE: Fire Node" },
         { "Temple of Elemental Evil: Water Node", "ToEE: Water Node" },
     };
+
+    // Quests that can only be run on Solo, which counts as Normal. Their entrances offer no difficulty, so
+    // without this a completion could carry over the previous quest's difficulty. Solo quests that only
+    // run during events are left out, as they aren't on the DDOQT site.
+    private static readonly HashSet<string> _soloOnlyQuestKeys = new[]
+    {
+        "Hall of the Mark", "The Grotto", "Arachnophobia", "The Miller's Debt", "Home Sweet Sewer",
+        "Raiding the Giants' Vault"
+    }.Select(QuestNameKey).ToHashSet();
 
     public static Plugin? Instance { get; private set; }
 
@@ -407,6 +419,15 @@ public class Plugin : IPlugin
                     _log.Info($"Quest completion alert - Title: '{title}', Description: '{desc}'");
                     var alertUtc = DateTime.UtcNow;
 
+                    // DDO credits a quest when it's completed in the dungeon ("Adventure Completed" with
+                    // the XP). A "Quest Completed" with no XP is the NPC hand-in, which is only for the
+                    // rewards, and crediting it would pick the wrong quest or difficulty.
+                    if (desc.StartsWith("Quest Completed") && !desc.Contains("You receive", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _log.Info("Quest Completed with no XP is an NPC hand-in, ignoring it");
+                        return;
+                    }
+
                     // Try to extract difficulty from alert text (e.g., "Quest Completed on Elite")
                     var alertDifficulty = ExtractDifficultyFromAlert(desc) ?? ExtractDifficultyFromAlert(title);
                     if (!string.IsNullOrEmpty(alertDifficulty))
@@ -526,12 +547,14 @@ public class Plugin : IPlugin
                 _log.Info($"Quest completed - RecordName: '{questRecord.QuestName}', WeenieName: '{actualName}', UsingName: '{usingName}', " +
                           $"difficulty: {difficulty}, DID: {questDid.Value}");
 
+                difficulty = CorrectSoloDifficulty(usingName, difficulty);
+
                 // Pass the resolved name but keep the record's favor/level metadata
                 AddCompletedQuestFromRecord(questRecord, difficulty, usingName, ranHigherTier);
                 _ui?.RefreshQuestCount();
 
                 // Reset difficulty after completion for next quest
-                _currentInstanceDifficulty = "Elite";
+                _currentInstanceDifficulty = "Normal";
             }
             else if (questDid.HasValue && questDid.Value != 0)
             {
@@ -540,6 +563,7 @@ public class Plugin : IPlugin
 
                 if (!string.IsNullOrEmpty(questName))
                 {
+                    difficulty = CorrectSoloDifficulty(questName, difficulty);
                     _log.Info($"Quest completed (via weenie name): {questName} at {difficulty}");
                     AddCompletedQuestByName(questDid.Value, questName, difficulty);
                     _ui?.RefreshQuestCount();
@@ -550,7 +574,7 @@ public class Plugin : IPlugin
                 }
                 
                 // Reset difficulty after completion for next quest
-                _currentInstanceDifficulty = "Elite";
+                _currentInstanceDifficulty = "Normal";
             }
         }
         catch (Exception ex)
@@ -617,6 +641,20 @@ public class Plugin : IPlugin
         if (_questNameAliases.TryGetValue(normalised, out var alias))
             normalised = alias;
         return normalised.ToLowerInvariant();
+    }
+
+    private static bool IsSoloOnlyQuest(string? questName) => _soloOnlyQuestKeys.Contains(QuestNameKey(questName));
+
+    /// <summary>
+    /// Normal for a solo-only quest, whatever difficulty it was recorded at; otherwise the difficulty unchanged
+    /// </summary>
+    private string CorrectSoloDifficulty(string? questName, string difficulty)
+    {
+        if (difficulty == "Normal" || !IsSoloOnlyQuest(questName))
+            return difficulty;
+
+        _log.Info($"Solo-only quest {questName} recorded as {difficulty}, correcting to Normal");
+        return "Normal";
     }
 
     private string DescribeQuest(uint? questDid)
@@ -894,7 +932,7 @@ public class Plugin : IPlugin
     {
         _currentInstanceQuestDid = null;
         _currentQuestAreaId = null;
-        _currentInstanceDifficulty = "Elite";
+        _currentInstanceDifficulty = "Normal";
         _ui?.UpdateInstanceDisplay(null);
     }
 
@@ -1395,6 +1433,8 @@ public class Plugin : IPlugin
             {
                 var json = File.ReadAllText(cacheFile);
                 quests = JsonSerializer.Deserialize<List<QuestCompletion>>(json) ?? new List<QuestCompletion>();
+                foreach (var quest in quests)
+                    quest.Difficulty = CorrectSoloDifficulty(quest.QuestName, quest.Difficulty);
                 _log.Info($"Loaded {quests.Count} quests from cache file for character {_currentCharacterId}");
             }
             else
@@ -1442,8 +1482,8 @@ public class Plugin : IPlugin
                 _log.Info($"Dropped {dropped.Count} cached completions that this character's quest records show as not completed: {names}{more}");
             }
 
-            // The snapshot only says Elite for a Reaper run (and is stale until the next login), so
-            // remember what was already recorded to avoid overwriting it with a lower difficulty
+            // Remember what was already recorded: the snapshot only says Elite for a Reaper run, holds one
+            // difficulty for all versions of a quest, and is stale for quests completed since login
             var previousByKey = new Dictionary<string, QuestCompletion>();
             foreach (var previous in _completedQuests.Where(c => sdkCompletedDids.Contains(c.QuestDid)))
                 previousByKey[CompletionKey(previous.QuestDid, previous.QuestLevel)] = previous;
@@ -1495,7 +1535,7 @@ public class Plugin : IPlugin
                             if (shouldInclude)
                             {
                                 var (questId, matched) = ConvertToQuestId(questName, level);
-                                AddKeepingHigherDifficulty(previousByKey, new QuestCompletion
+                                AddFromRecords(previousByKey, recordsExact: false, new QuestCompletion
                                 {
                                     QuestDid = quest.QuestDid,
                                     QuestName = questName,
@@ -1512,7 +1552,9 @@ public class Plugin : IPlugin
                     {
                         // Single version quest - add normally
                         var (questId, matched) = ConvertToQuestId(questName, baseLevel);
-                        AddKeepingHigherDifficulty(previousByKey, new QuestCompletion
+                        // The records' difficulty is exact for a single-version quest, unless they give none
+                        // (seasonal quests only show as completed through their favour)
+                        AddFromRecords(previousByKey, recordsExact: rawDifficulty.HasValue, new QuestCompletion
                         {
                             QuestDid = quest.QuestDid,
                             QuestName = questName,
@@ -1536,15 +1578,29 @@ public class Plugin : IPlugin
     private static string CompletionKey(uint questDid, int questLevel) => $"{questDid}:{questLevel}";
 
     /// <summary>
-    /// Adds a completion rebuilt from the quest records, keeping the difficulty already recorded
-    /// for that quest and level when it was higher. Call with _questLock held.
+    /// Adds a completion rebuilt from the quest records. When the records' difficulty is exact (a
+    /// single-version quest that has one) it's used, except that a recorded Reaper is kept (the records say
+    /// Elite for it). Otherwise, as for a quest with epic or legendary versions, or one completed since
+    /// login, the recorded difficulty is kept when higher. Solo-only quests are always Normal.
+    /// Call with _questLock held.
     /// </summary>
-    private void AddKeepingHigherDifficulty(Dictionary<string, QuestCompletion> previousByKey, QuestCompletion completion)
+    private void AddFromRecords(Dictionary<string, QuestCompletion> previousByKey, bool recordsExact, QuestCompletion completion)
     {
-        if (previousByKey.TryGetValue(CompletionKey(completion.QuestDid, completion.QuestLevel), out var previous) &&
-            GetDifficultyRank(previous.Difficulty) >= GetDifficultyRank(completion.Difficulty))
+        completion.Difficulty = CorrectSoloDifficulty(completion.QuestName, completion.Difficulty);
+        var key = CompletionKey(completion.QuestDid, completion.QuestLevel);
+
+        if (!IsSoloOnlyQuest(completion.QuestName) && previousByKey.TryGetValue(key, out var previous))
         {
-            completion.Difficulty = previous.Difficulty;
+            var previousIsHigher = GetDifficultyRank(previous.Difficulty) > GetDifficultyRank(completion.Difficulty);
+            var keepPrevious = !recordsExact || _sessionCompletionKeys.Contains(key)
+                ? GetDifficultyRank(previous.Difficulty) >= GetDifficultyRank(completion.Difficulty)
+                : previous.Difficulty == "Reaper";
+
+            if (keepPrevious)
+                completion.Difficulty = previous.Difficulty;
+            else if (previousIsHigher)
+                _log.Info($"Quest records show {completion.QuestName} (L{completion.QuestLevel}) at {completion.Difficulty}, " +
+                          $"replacing the recorded {previous.Difficulty}");
         }
 
         _completedQuests.Add(completion);
